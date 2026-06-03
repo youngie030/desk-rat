@@ -755,15 +755,22 @@ export function createPersonality() {
 
     // 평상시 무드/유대 잡담 / ambient mood-or-bond chatter.
     // 기본 확률은 낮고, sass가 높으면 말이 좀 더 많다 / sassy rats quip more.
-    const baseP = 0.004 + t.sass * 0.006;
+    const baseP = 0.0025 + t.sass * 0.004; // quieter: real silent stretches
     if (Math.random() < baseP) {
-      // 60%는 무드 풀, 40%는 유대 풀 / mix mood & bond pools.
+      // 유대가 높을수록 관계형(유대) 대사를 더 자주 / warmth grows with bond.
+      const bondMixP = S.bond >= 66 ? 0.55 : S.bond >= 36 ? 0.45 : 0.35;
       let pool;
-      if (Math.random() < 0.6 && LINES[S.moodId]) pool = LINES[S.moodId];
+      if (Math.random() > bondMixP && LINES[S.moodId]) pool = LINES[S.moodId];
       else pool = LINES[bondTier()];
-      const line = pick(pool);
+      // 애정 대사는 유대가 쌓여야 / keep warm wording earned.
+      if (pool === LINES.affectionate && S.bond < 45) pool = LINES.content;
+      let line = pick(pool);
+      if (line && line === S.lastSay && pool.length > 1) line = pick(pool); // no immediate echo
       if (line) {
-        // 시크한 무드일수록 살짝 더 긴 쿨다운 / quieter when aloof.
+        // 고유대 + 따뜻한 무드면 가끔 작게 흘리듯 / soften delivery when fond.
+        if (S.bond >= 66 && (S.moodId === 'affectionate' || S.moodId === 'content') &&
+            Math.random() < 0.15 && line.indexOf('(작게)') < 0) line += ' (작게)';
+        S.lastSay = line;
         S.sayCd = rand(10, 18) + (S.moodId === 'sulky' ? 6 : 0);
         return line;
       }
@@ -790,7 +797,7 @@ export function createPersonality() {
     }
 
     // 무드 기반 드문 emote / rare mood-based ambient emote.
-    const p = 0.003;
+    const p = 0.0018;
     if (Math.random() < p) {
       let e = null;
       switch (S.moodId) {

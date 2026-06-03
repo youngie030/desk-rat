@@ -94,6 +94,8 @@ let walkAmt = 0;          // 0..1 eased "how much walking" (drives leg/arm gait)
 let gaitPhase = 0;        // 0..1 gait phase from the life brain
 const tailChain = new Array(11).fill(0); // springy tail follow-through
 const tailVel = new Array(11).fill(0);
+let breathPhase = 0, tailPhase = 0; // phase accumulators (variable rate × absolute
+// time causes phase jumps = tremble; accumulating phase fixes it)
 let prevRootRotY = 0, prevRootRotZ = 0;
 let lastFacing = 1, turnT = 0; // turn-in-place on direction reversal
 let bellyJig = 0, bellyJigV = 0, prevRootYpos = 0; // flesh jiggle spring on impacts
@@ -395,7 +397,7 @@ let idleLookTarget = -0.18; // chic: tends to glance away
 // Idle micro-life accumulators.
 let idleLookX = 0, idleLookTargetX = 0.05;
 let shiftPhase = 0;                    // slow weight-shift
-let nextSniff = 4 + Math.random() * 5, sniffT = -1;
+let nextSniff = 4 + Math.random() * 5, sniffT = -1, sighT = 0;
 let nextEarFlick = 2 + Math.random() * 4, earFlickL = 0, earFlickR = 0;
 
 // ---------------------------------------------------------------------------
@@ -610,6 +612,7 @@ function updateState(dt, hs, bs, curDist) {
       Object.assign(target, {
         eyeOpen: 1.15, earPerk: 1, bodyLean: 0.42,
         armRaise: 1.25, armIn: 0, jaw: 0.35 + Math.sin(stateT * 14) * 0.2,
+        armSwingL: 0.12, armSwingR: -0.06, // uneven paw height: eager, not a stiff T-pose
         lookGain: 1.2, tailAmp: 0.34, tailSpeed: 4, rootY: hop, belly: fullness,
       });
       if (!data.said) { say('줘... 줘!!', 1.4); data.said = true; }
@@ -665,7 +668,7 @@ function updateState(dt, hs, bs, curDist) {
       const p = Math.min(stateT / 0.4, 1);
       Object.assign(target, {
         eyeOpen: 1, earPerk: 1, bodyLean: 0.4, jaw: 0.5,
-        squash: stateT < 0.12 ? 0.5 : -0.1, rootY: Math.sin(p * Math.PI) * 0.18,
+        squash: lerp(0.5, -0.1, Math.min(stateT / 0.12, 1)), rootY: Math.sin(p * Math.PI) * 0.18,
         armRaise: 0.6, lookGain: 0.8, tailAmp: 0.3, belly: fullness,
       });
       if (stateT > 0.42) setState(dirOut.playing ? 'play' : 'curious');
@@ -895,8 +898,10 @@ function applyPose(t, dt, hs, bs, curDist) {
   // Breathing — rate tied to arousal, amplitude slowly swelling (no two alike).
   const arous = (dir && dir.arousal) || 0.3;
   const breathRate = 1.3 + arous * 0.9;
-  const breathAmp = 0.025 * (1 + Math.sin(t * 0.13) * 0.25);
-  const breath = Math.sin(t * breathRate) * breathAmp * (1 - cur.belly * 0.4);
+  breathPhase += breathRate * dt; // accumulate (no phase jump when rate changes)
+  let breathAmp = 0.025 * (1 + Math.sin(t * 0.13) * 0.25);
+  if (sighT > 0) { sighT -= dt; breathAmp *= 1 + 0.8 * Math.max(0, sighT / 0.5); } // a slow deep exhale
+  const breath = Math.sin(breathPhase) * breathAmp * (1 - cur.belly * 0.4);
   rat.bodyGroup.scale.set(
     1 + cur.squash * 0.4 - breath * 0.5,
     1 - cur.squash * 0.5 + breath,
@@ -923,14 +928,17 @@ function applyPose(t, dt, hs, bs, curDist) {
   const resting = state === 'idle' && (curPosture === 'sit' || curPosture === 'stand');
   if (resting) {
     shiftPhase += dt * 0.22;
-    const sh = Math.sin(shiftPhase);
+    const sh = Math.sin(shiftPhase) * 0.8 + Math.sin(shiftPhase * 0.37 + 1.3) * 0.2; // never repeats
     rat.root.rotation.z += sh * 0.03;
     rat.root.position.y += -Math.abs(sh) * 0.012;
     shiftNeckZ = -sh * 0.04;
   }
   if (state === 'idle' || state === 'curious') {
     nextSniff -= dt;
-    if (nextSniff <= 0 && sniffT < 0) { sniffT = 0; nextSniff = 5 + Math.random() * 7; }
+    if (nextSniff <= 0 && sniffT < 0) {
+      sniffT = 0; nextSniff = 5 + Math.random() * 7;
+      if (Math.random() < 0.25) sighT = 0.5; // sometimes a contented settle-sigh
+    }
     if (sniffT >= 0) {
       sniffT += dt;
       const env = Math.sin(Math.min(sniffT / 0.5, 1) * Math.PI);
@@ -965,7 +973,7 @@ function applyPose(t, dt, hs, bs, curDist) {
   // ---- Eyes: blink + openness ----
   blink = lerp(blink, 1, 0.25);
   nextBlink -= dt;
-  if (nextBlink <= 0) { blink = 0; nextBlink = 2.5 + Math.random() * 3.5; }
+  if (nextBlink <= 0) { blink = 0; nextBlink = (Math.random() < 0.18) ? 0.16 : 2.5 + Math.random() * 3.5; }
   const ex = dir.expr || {};
   const open = THREE.MathUtils.clamp(cur.eyeOpen + (ex.eyeOpen || 0), 0, 1.2) * blink;
   const brow = ex.browTilt || 0; // mood slant: <0 furrowed/grumpy, >0 raised/curious
@@ -984,9 +992,16 @@ function applyPose(t, dt, hs, bs, curDist) {
   nextFidget -= dt;
   if (nextFidget <= 0) {
     earTwitch = (Math.random() - 0.5) * 0.5;
-    idleLookTarget = (Math.random() - 0.5) * 0.7 - 0.1;
-    idleLookTargetX = (Math.random() - 0.5) * 0.35;
-    nextFidget = (Math.random() < 0.1 ? 0.8 : 3 + Math.random() * 5); // occasional quick double-glance
+    if (Math.random() < 0.3 && cursor.x > -900) {
+      // Chic: steal a glance at the cursor, then look away on the next fidget.
+      idleLookTarget = THREE.MathUtils.clamp((cursor.x - hs.x) / 340, -0.6, 0.6);
+      idleLookTargetX = THREE.MathUtils.clamp((cursor.y - hs.y) / 380, -0.3, 0.4);
+      nextFidget = 0.6 + Math.random() * 0.5;
+    } else {
+      idleLookTarget = (Math.random() - 0.5) * 0.7 - 0.1;
+      idleLookTargetX = (Math.random() - 0.5) * 0.35;
+      nextFidget = (Math.random() < 0.1 ? 0.8 : 3 + Math.random() * 5);
+    }
   }
   nextEarFlick -= dt;
   if (nextEarFlick <= 0) {
@@ -1099,8 +1114,9 @@ function applyPose(t, dt, hs, bs, curDist) {
   }
   const tAmp = cur.tailAmp + (ex.tailAmp || 0);
   const tSpd = cur.tailSpeed + (ex.tailSpeed || 0);
+  tailPhase += tSpd * dt; // accumulate (variable tailSpeed must not jump the phase)
   rat.tailSegs.forEach((seg, i) => {
-    const phase = t * tSpd - i * 0.5;
+    const phase = tailPhase - i * 0.5;
     seg.rotation.y = Math.sin(phase) * tAmp + tailChain[i] * (0.4 + i * 0.12);
     seg.rotation.x = 0.12 + i * 0.015 + Math.cos(phase * 0.5) * 0.05; // distal droop
   });
