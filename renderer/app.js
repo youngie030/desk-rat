@@ -69,7 +69,10 @@ const cur = { ...def };
 // Expressive channels use a slightly under-damped spring (overshoot + settle)
 // instead of a dead lerp — "servo" -> "muscle". Slow channels keep the lerp.
 const vel = {};
-const SPRING = { bodyLean: 1, armRaise: 1, armSpread: 1, rootY: 1, neckX: 1, bodyYaw: 1, squash: 1 };
+// Spring ONLY channels that get step changes (not per-frame oscillating targets
+// like rootY/squash/neckX — those would resonate into a tremble). Near-critical
+// damping → a touch of life on arrival, no jitter.
+const SPRING = { bodyLean: 1, armRaise: 1, armSpread: 1, bodyYaw: 1 };
 let curLookGain = 0; // separately-smoothed look gain (prevents neck whip)
 
 function lerp(a, b, t) { return a + (b - a) * t; }
@@ -506,7 +509,7 @@ function frameBody() {
   const k = 1 - Math.pow(0.001, dt);
   for (const key in target) {
     if (SPRING[key]) {
-      const a = (target[key] - cur[key]) * 120 - (vel[key] || 0) * 14; // ζ≈0.64
+      const a = (target[key] - cur[key]) * 90 - (vel[key] || 0) * 19; // ζ≈1.0, no jitter
       vel[key] = (vel[key] || 0) + a * dt;
       cur[key] += vel[key] * dt;
     } else {
@@ -1090,7 +1093,7 @@ function applyPose(t, dt, hs, bs, curDist) {
   const drive = THREE.MathUtils.clamp(-yawVel * 0.22 - rollVel * 0.14, -0.7, 0.7);
   tailChain[0] += (drive - tailChain[0]) * Math.min(1, dt * 12);
   for (let i = 1; i < tailChain.length; i++) {
-    const a = (tailChain[i - 1] - tailChain[i]) * 90 - tailVel[i] * 11; // springy whip + settle
+    const a = (tailChain[i - 1] - tailChain[i]) * 60 - tailVel[i] * 16; // settle, no tip jitter
     tailVel[i] += a * dt;
     tailChain[i] += tailVel[i] * dt;
   }
