@@ -136,11 +136,14 @@ function startCursorPoller() {
 // Renderer asks to reposition the window (the rat wandering the desktop).
 ipcMain.on('move-window', (_e, pos) => {
   if (!win || win.isDestroyed()) return;
-  const wa = screen.getPrimaryDisplay().workArea;
-  const b = win.getBounds();
-  const x = Math.round(Math.max(wa.x, Math.min(wa.x + wa.width - b.width, pos.x)));
-  const y = Math.round(Math.max(wa.y, Math.min(wa.y + wa.height - b.height, pos.y)));
-  win.setPosition(x, y);
+  if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return; // guard NaN
+  try {
+    const wa = screen.getPrimaryDisplay().workArea;
+    const b = win.getBounds();
+    const x = Math.round(Math.max(wa.x, Math.min(wa.x + wa.width - b.width, pos.x)));
+    const y = Math.round(Math.max(wa.y, Math.min(wa.y + wa.height - b.height, pos.y)));
+    win.setPosition(x, y);
+  } catch {}
 });
 
 // Renderer tells us where the rat's body is so we can hit-test the cursor.

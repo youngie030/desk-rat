@@ -223,11 +223,17 @@ window.addEventListener('dragleave', (e) => { e.preventDefault(); });
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
   dragActive = false;
-  const files = [...(e.dataTransfer?.files || [])];
-  if (!files.length) return;
-  const paths = files.map((f) => window.deskrat.pathForFile(f)).filter(Boolean);
-  if (!paths.length) return;
-  startEat(paths);
+  try {
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.length) return;
+    const paths = files
+      .map((f) => { try { return window.deskrat.pathForFile(f); } catch { return ''; } })
+      .filter(Boolean);
+    if (!paths.length) return;
+    startEat(paths);
+  } catch (err) {
+    console.error('[deskrat] drop error', err);
+  }
 });
 
 // Debug overlay (visible only in demo/test runs).
@@ -389,7 +395,25 @@ let nextEarFlick = 2 + Math.random() * 4, earFlickL = 0, earFlickR = 0;
 const clock = new THREE.Clock();
 let stateClock = 0;
 
+// Keep the rat alive across transient failures (e.g. a GPU/WebGL context loss
+// when a heavy window like the Recycle Bin opens). Never let one bad frame stop
+// the animation loop.
+let ctxLost = false;
+canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); ctxLost = true; }, false);
+canvas.addEventListener('webglcontextrestored', () => { ctxLost = false; }, false);
+window.addEventListener('error', (e) => { console.error('[deskrat] error', e.error || e.message); });
+window.addEventListener('unhandledrejection', (e) => { console.error('[deskrat] rejection', e.reason); });
+
 function frame() {
+  try {
+    if (!ctxLost) frameBody();
+  } catch (err) {
+    console.error('[deskrat] frame error (recovered)', err);
+  }
+  requestAnimationFrame(frame);
+}
+
+function frameBody() {
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
   stateClock += dt;
@@ -499,7 +523,6 @@ function frame() {
   window.deskrat.reportRegion({ cx: bs.x, cy: bs.y - 20, r: held ? 260 : 150 });
 
   renderer.render(scene, camera);
-  requestAnimationFrame(frame);
 }
 
 function updateState(dt, hs, bs, curDist) {
