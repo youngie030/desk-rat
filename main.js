@@ -79,6 +79,15 @@ function createTray() {
     { label: '책상 쥐 🐀  (파일을 끌어다 먹이세요)', enabled: false },
     { type: 'separator' },
     { label: '춤추게 하기 ♪', click: () => win && win.webContents.send('cmd', 'dance') },
+    {
+      label: '구석으로 부르기',
+      click: () => {
+        if (!win) return;
+        const wa = screen.getPrimaryDisplay().workArea;
+        const b = win.getBounds();
+        win.setPosition(wa.x + wa.width - b.width, wa.y + wa.height - b.height);
+      },
+    },
     { type: 'separator' },
     { label: '종료', click: () => app.quit() },
   ]);
@@ -107,15 +116,32 @@ function startCursorPoller() {
       interactive = false;
     }
 
+    const wa = screen.getPrimaryDisplay().workArea;
     win.webContents.send('cursor', {
       x: localX,
       y: localY,
       inside,
       w: b.width,
       h: b.height,
+      wx: b.x,
+      wy: b.y,
+      sx: wa.x,
+      sy: wa.y,
+      sw: wa.width,
+      sh: wa.height,
     });
   }, 16);
 }
+
+// Renderer asks to reposition the window (the rat wandering the desktop).
+ipcMain.on('move-window', (_e, pos) => {
+  if (!win || win.isDestroyed()) return;
+  const wa = screen.getPrimaryDisplay().workArea;
+  const b = win.getBounds();
+  const x = Math.round(Math.max(wa.x, Math.min(wa.x + wa.width - b.width, pos.x)));
+  const y = Math.round(Math.max(wa.y, Math.min(wa.y + wa.height - b.height, pos.y)));
+  win.setPosition(x, y);
+});
 
 // Renderer tells us where the rat's body is so we can hit-test the cursor.
 ipcMain.on('rat-region', (_e, region) => {

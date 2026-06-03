@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('deskrat', {
   onCursor: (cb) => ipcRenderer.on('cursor', (_e, data) => cb(data)),
   // Report the rat silhouette so the main process can hit-test the cursor.
   reportRegion: (region) => ipcRenderer.send('rat-region', region),
+  moveWindow: (x, y) => ipcRenderer.send('move-window', { x, y }),
   onDevEat: (cb) => ipcRenderer.on('dev-eat', (_e, p) => cb(p)),
   onDevPose: (cb) => ipcRenderer.on('dev-pose', (_e, p) => cb(p)),
   onCmd: (cb) => ipcRenderer.on('cmd', (_e, c) => cb(c)),

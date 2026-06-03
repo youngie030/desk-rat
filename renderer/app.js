@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three.module.js';
 import { buildRat } from './rat.js';
+import { createLife } from './life.js';
 
 // ---------------------------------------------------------------------------
 // Scene / renderer / camera
@@ -50,8 +51,8 @@ resize();
 // procedural motion (breathing, sway, wag, blink) is layered on top.
 // ---------------------------------------------------------------------------
 const def = {
-  rootRotX: -0.04, rootRotY: 0, rootRotZ: 0, rootY: 0,
-  bodyLean: 0, squash: 0,
+  rootRotX: -0.04, rootRotY: 0, rootRotZ: 0, rootY: 0, bodyYaw: 0,
+  bodyLean: 0, squash: 0, legSwing: 0, armSwingGait: 0, groom: 0,
   neckX: 0, neckY: 0, neckZ: 0,
   jaw: 0,
   eyeOpen: 0.52, // chic = half-lidded
@@ -74,6 +75,13 @@ let stateT = 0;
 const data = {}; // per-state scratch
 let annoy = 0;
 let fullness = 0; // 0..1 persistent belly fill
+
+// Autonomous "life" brain (wandering, lying, napping, grooming, zoomies).
+const life = createLife();
+let curPosture = 'sit';   // posture hint currently driving the body
+let curActivity = 'lounge';
+let walkAmt = 0;          // 0..1 eased "how much walking" (drives leg/arm gait)
+let gaitPhase = 0;        // 0..1 gait phase from the life brain
 
 function setState(s) {
   state = s;
@@ -108,7 +116,11 @@ const clamp01100 = (v) => Math.max(0, Math.min(100, v));
 // Natural drift of stats over time.
 function tickStats(dt) {
   stats.hunger = clamp01100(stats.hunger + dt * 0.45);          // gets hungry
-  stats.energy = clamp01100(stats.energy - dt * (state === 'dance' ? 6 : state === 'sleep' ? -9 : 0.25));
+  let eRate = 0.25;
+  if (state === 'dance') eRate = 6;
+  else if (curPosture === 'sleep') eRate = -9;                  // naps restore energy
+  else if (curPosture === 'walk') eRate = curActivity === 'zoomies' ? 4 : 1;
+  stats.energy = clamp01100(stats.energy - dt * eRate);
   stats.affection = clamp01100(stats.affection + (55 - stats.affection) * dt * 0.01); // drifts to neutral
   stats.weight = clamp01100(stats.weight - dt * 0.12);          // slowly slims down
   // Belly baseline follows weight when not actively full from a meal.
@@ -360,42 +372,14 @@ function updateState(dt, hs, bs, curDist) {
 
   // Transient channels default to 0 each frame; states that want them override.
   target.armSpread = 0; target.armSwingL = 0; target.armSwingR = 0;
-  target.rootRotZ = 0; target.rootY = 0;
+  target.rootRotZ = 0; target.rootY = 0; target.groom = 0; target.bodyYaw = 0;
+  if (state !== 'idle') curPosture = 'sit'; // interactions drain energy normally
 
   switch (state) {
     case 'idle': {
-      const m = mood();
-      const hungry = stats.hunger > 70;
-      // Chic idle: a bit livelier when in a good mood, droopier when low.
-      Object.assign(target, {
-        eyeOpen: hungry ? 0.8 : lerp(0.5, 0.66, m), earBack: 0, earPerk: m > 0.7 ? 0.25 : 0,
-        armRaise: 0, armIn: 0, jaw: 0, bodyLean: 0, armSpread: 0,
-        armSwingL: 0, armSwingR: 0,
-        tailAmp: lerp(0.08, 0.18, m), tailSpeed: lerp(0.9, 1.8, m),
-        lookGain: near ? 0.5 : 0.12, belly: fullness,
-      });
       if (annoy > 0) annoy = Math.max(0, annoy - dt * 0.3);
-      if (near) { setState('curious'); break; }
-      // Stat-driven autonomous behaviour.
-      if (stats.energy < 14) { setState('sleep'); break; }
-      data.idleT = (data.idleT || 0) + dt;
-      if (hungry && data.idleT > 6) { data.idleT = 0; say(stats.hunger > 88 ? '배고파 죽겠어...' : '...출출한데.', 1.6); }
-      // Spontaneous dance when happy, energetic and not starving.
-      if (m > 0.72 && stats.energy > 45 && stats.hunger < 55 && data.idleT > 7 && Math.random() < 0.012) {
-        setState('dance');
-      }
-      break;
-    }
-    case 'sleep': {
-      Object.assign(target, {
-        eyeOpen: 0, earBack: 0.2, earPerk: 0, bodyLean: -0.05,
-        armRaise: 0, armIn: 0, jaw: 0, lookGain: 0,
-        tailAmp: 0.04, tailSpeed: 0.5, belly: fullness,
-      });
-      data.z = (data.z || 0) + dt;
-      if (data.z > 2.4) { data.z = 0; spawnFloat('z', '💤'); }
-      // Wake up when poked/petted (handled by those), cursor close, or rested.
-      if (near || stats.energy > 80) { say('...하암.', 1.2); setState('idle'); }
+      if (near || dragActive) { setState('curious'); break; }
+      runLife(dt); // autonomous wandering / lying / napping / grooming
       break;
     }
     case 'dance': {
@@ -493,10 +477,24 @@ function updateState(dt, hs, bs, curDist) {
     case 'demo': {
       if (data.tour) {
         if (data.tourStart == null) data.tourStart = stateClock;
-        const seq = ['reach', 'beg', 'eatgrab', 'poke', 'pet', 'full'];
+        const seq = ['reach', 'beg', 'eatgrab', 'poke', 'pet', 'full', 'walk', 'lie', 'sleep', 'groom'];
         data.pose = seq[Math.floor((stateClock - data.tourStart) / 2.6) % seq.length];
+        if (data.lastLogged !== data.pose) { data.lastLogged = data.pose; console.log('POSE:' + data.pose); }
       }
       const p = data.pose;
+      if (p === 'walk' || p === 'lie' || p === 'sleep' || p === 'groom') {
+        // Reuse the autonomous posture poses for deterministic screenshotting.
+        curPosture = p;
+        walkAmt = p === 'walk' ? 1 : 0;
+        if (p === 'walk') { gaitPhase = (stateClock * 1.6) % 1; target.bodyYaw = -1.15; }
+        const m = 0.6;
+        const PP = target; PP.lookGain = 0; PP.belly = fullness;
+        if (p === 'walk') Object.assign(PP, { eyeOpen: 0.7, earPerk: 0.5, bodyLean: 0.16, armRaise: 0, armIn: 0, jaw: 0, tailAmp: 0.16, tailSpeed: 2.4 });
+        else if (p === 'lie') Object.assign(PP, { eyeOpen: 0.32, earBack: 0.1, bodyLean: 0.05, rootY: -0.52, tailAmp: 0.05, tailSpeed: 0.7 });
+        else if (p === 'sleep') Object.assign(PP, { eyeOpen: 0, earBack: 0.25, bodyLean: 0.08, rootY: -0.56, neckX: 0.24, tailAmp: 0.03 });
+        else if (p === 'groom') Object.assign(PP, { eyeOpen: 0.45, earPerk: 0.2, bodyLean: 0.08, armRaise: 0.5, armIn: 1.05, jaw: 0.08, groom: 1 });
+        break;
+      }
       const base = { lookGain: 0, belly: fullness, tailAmp: 0.15, tailSpeed: 2 };
       if (p === 'reach') Object.assign(target, base, { eyeOpen: 1, earPerk: 1, bodyLean: 0.32, armRaise: 1, jaw: 0.5 });
       else if (p === 'beg') Object.assign(target, base, { eyeOpen: 1.15, bodyLean: 0.42, armRaise: 1.25, jaw: 0.4, earPerk: 1 });
@@ -558,6 +556,78 @@ function runEat(dt) {
 }
 
 // ---------------------------------------------------------------------------
+// Autonomous life: ask the brain what to do, then drive window + posture.
+// ---------------------------------------------------------------------------
+function runLife(dt) {
+  const m = mood();
+  const ctx = {
+    stats,
+    cursorNear: false, // idle already handed off to 'curious' when near
+    dragActive,
+    busy: false,
+    win: { x: cursor.wx || 0, y: cursor.wy || 0, w: cursor.w || 480, h: cursor.h || 520 },
+    screen: { x: cursor.sx || 0, y: cursor.sy || 0, w: cursor.sw || 1920, h: cursor.sh || 1080 },
+  };
+  const act = life.update(dt, ctx);
+  curActivity = act.name;
+  curPosture = act.posture;
+
+  // ---- window movement (the rat walking across the desktop) ----
+  if (act.moveWindowTo && act.speedPx > 0) {
+    const wx = ctx.win.x, wy = ctx.win.y;
+    const dx = act.moveWindowTo.x - wx, dy = act.moveWindowTo.y - wy;
+    const d = Math.hypot(dx, dy) || 1;
+    const step = act.speedPx * dt;
+    let nx, ny;
+    if (d <= step) { nx = act.moveWindowTo.x; ny = act.moveWindowTo.y; }
+    else { nx = wx + (dx / d) * step; ny = wy + (dy / d) * step; }
+    window.deskrat.moveWindow(nx, ny);
+  }
+
+  // ---- facing + gait blend ----
+  const walking = act.posture === 'walk';
+  walkAmt = lerp(walkAmt, walking ? 1 : 0, 1 - Math.pow(0.004, dt));
+  if (walking) gaitPhase = act.stepPhase;
+  // Turn toward a 3/4 walking profile while moving; face the viewer otherwise.
+  target.bodyYaw = walking ? -act.facing * 1.15 : 0;
+
+  // ---- one-shot lines + floating emotes ----
+  if (act.say) say(act.say, 1.6);
+  if (act.emote) {
+    const map = { sleep: ['z', '💤'], note: ['note', '♪'], sparkle: ['note', '✨'], dust: ['z', '💨'] };
+    const e = map[act.emote];
+    if (e) spawnFloat(e[0], e[1]);
+  }
+
+  // ---- posture -> pose targets ----
+  const P = target;
+  P.lookGain = 0.12; P.belly = fullness;
+  switch (act.posture) {
+    case 'walk':
+      Object.assign(P, { eyeOpen: 0.7, earPerk: 0.5, earBack: 0, bodyLean: 0.16,
+        armRaise: 0, armIn: 0, jaw: 0, tailAmp: 0.16, tailSpeed: 2.4, lookGain: 0 });
+      break;
+    case 'lie':
+      Object.assign(P, { eyeOpen: 0.32, earPerk: 0, earBack: 0.1, bodyLean: 0.05,
+        armRaise: 0, armIn: 0, jaw: 0, rootY: -0.52, tailAmp: 0.05, tailSpeed: 0.7 });
+      break;
+    case 'sleep':
+      Object.assign(P, { eyeOpen: 0, earPerk: 0, earBack: 0.25, bodyLean: 0.08,
+        armRaise: 0, armIn: 0, jaw: 0, rootY: -0.56, neckX: 0.24,
+        tailAmp: 0.03, tailSpeed: 0.4, lookGain: 0 });
+      break;
+    case 'groom':
+      Object.assign(P, { eyeOpen: 0.45, earPerk: 0.2, earBack: 0, bodyLean: 0.08,
+        armRaise: 0.5, armIn: 1.05, jaw: 0.08, groom: 1, tailAmp: 0.1, tailSpeed: 1.5 });
+      break;
+    default: // 'sit' / 'stand'
+      Object.assign(P, { eyeOpen: lerp(0.5, 0.66, m), earPerk: m > 0.7 ? 0.25 : 0, earBack: 0,
+        armRaise: 0, armIn: 0, jaw: 0, bodyLean: 0,
+        tailAmp: lerp(0.08, 0.18, m), tailSpeed: lerp(0.9, 1.8, m) });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Apply pose to the actual joints + procedural motion
 // ---------------------------------------------------------------------------
 function applyPose(t, dt, hs, bs, curDist) {
@@ -569,15 +639,15 @@ function applyPose(t, dt, hs, bs, curDist) {
     1 + cur.squash * 0.4 - breath * 0.5
   );
 
-  // Belly fullness — a noticeable pot belly, never bigger than the body itself.
-  const bScale = 1 + cur.belly * 0.5;
-  rat.belly.scale.set(0.95 * bScale, 1.05 * bScale, 0.7 * (1 + cur.belly * 0.55));
-  rat.belly.position.set(0, 0.92 - cur.belly * 0.08, 0.24 + cur.belly * 0.16);
+  // Belly: a subtle lighter underside at rest; bulges into a pot belly when full.
+  const bScale = 1 + cur.belly * 0.6;
+  rat.belly.scale.set(0.82 * bScale, 0.95 * bScale, 0.5 * (1 + cur.belly * 0.7));
+  rat.belly.position.set(0, 0.84 - cur.belly * 0.06, 0.18 + cur.belly * 0.16);
 
   // Root posture + idle sway.
   const sway = Math.sin(t * 0.9) * 0.02;
   rat.root.rotation.x = cur.rootRotX;
-  rat.root.rotation.y = cur.rootRotY + sway;
+  rat.root.rotation.y = cur.rootRotY + cur.bodyYaw + sway;
   rat.root.rotation.z = cur.rootRotZ + Math.sin(t * 0.7) * 0.01;
   rat.root.position.y = cur.rootY;
   // Keep the lean gentle so the rat's silhouette stays readable (no folding flat).
@@ -639,6 +709,33 @@ function applyPose(t, dt, hs, bs, curDist) {
     const w = Math.sin(t * 16) * 0.2;
     rat.armL.elbow.rotation.x += w;
     rat.armR.elbow.rotation.x -= w;
+  }
+
+  // Walking gait: legs swing fore/aft, arms counter-swing.
+  if (walkAmt > 0.01) {
+    const gp = gaitPhase * Math.PI * 2;
+    const la = 0.5 * walkAmt;
+    rat.legL.rotation.x = Math.sin(gp) * la;
+    rat.legR.rotation.x = Math.sin(gp + Math.PI) * la;
+    rat.armL.shoulder.rotation.x += Math.sin(gp + Math.PI) * 0.45 * walkAmt;
+    rat.armR.shoulder.rotation.x += Math.sin(gp) * 0.45 * walkAmt;
+  } else if (curPosture === 'lie' || curPosture === 'sleep') {
+    // Splayed-out limbs so the low posture reads as lying down, not crouching.
+    rat.legL.rotation.set(-0.55, 0, 0.6);
+    rat.legR.rotation.set(-0.55, 0, -0.6);
+  } else {
+    rat.legL.rotation.x *= 0.8;
+    rat.legR.rotation.x *= 0.8;
+    rat.legL.rotation.z *= 0.8;
+    rat.legR.rotation.z *= 0.8;
+  }
+
+  // Grooming: quick paw-to-face scrubbing + little head bob.
+  if (cur.groom > 0.01) {
+    const gr = Math.sin(t * 15) * cur.groom;
+    rat.armL.elbow.rotation.x += gr * 0.3;
+    rat.armR.elbow.rotation.x -= gr * 0.3;
+    rat.neck.rotation.x += Math.sin(t * 7.5) * cur.groom * 0.06;
   }
 
   // ---- Tail wag ----
