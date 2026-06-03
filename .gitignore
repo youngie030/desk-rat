@@ -3,4 +3,5 @@ node_modules/
 _*.png
 _dragtest/
 _shot*.png
+_commitmsg.txt
 *.log
