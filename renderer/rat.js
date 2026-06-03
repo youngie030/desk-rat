@@ -70,9 +70,10 @@ export function buildRat() {
   root.add(bodyGroup);
 
   // ---- Torso: lean faceted body via LatheGeometry --------------------------
+  // Lean, low-bellied pear: widest at the belly (y0.66), slim chest above.
   const profile = [
-    [0.02, 0.40], [0.22, 0.45], [0.36, 0.6], [0.41, 0.8], [0.40, 1.0],
-    [0.35, 1.18], [0.29, 1.34], [0.22, 1.46], [0.13, 1.54], [0.02, 1.58],
+    [0.02, 0.38], [0.20, 0.43], [0.33, 0.54], [0.37, 0.66], [0.36, 0.82],
+    [0.31, 1.0], [0.26, 1.18], [0.20, 1.34], [0.12, 1.46], [0.02, 1.52],
   ].map((p) => new THREE.Vector2(p[0], p[1]));
   const torsoGeo = new THREE.LatheGeometry(profile, 10);
   // Vertex-colour shading: darker along the back/top, lighter on the belly/front,
@@ -95,9 +96,9 @@ export function buildRat() {
   bodyGroup.add(torso);
 
   // Lighter belly underside (bulges only when full).
-  const belly = sph(0.36, MAT.belly, 9);
-  belly.scale.set(0.95, 1.15, 0.7);
-  belly.position.set(0, 0.84, 0.2);
+  const belly = sph(0.32, MAT.belly, 9);
+  belly.scale.set(0.92, 1.05, 0.62);
+  belly.position.set(0, 0.7, 0.18);
   bodyGroup.add(belly);
 
   // Helper: a static blend mass that fills a joint seam (child of bodyGroup).
@@ -109,31 +110,32 @@ export function buildRat() {
     return m;
   }
 
-  // Shoulder, hip, neck and tail-base masses so the limbs emerge from the body.
-  blob(-0.3, 1.36, 0.05, 0.2, 1, 1.1, 1);   // L shoulder
-  blob(0.3, 1.36, 0.05, 0.2, 1, 1.1, 1);    // R shoulder
-  blob(-0.26, 0.62, 0.02, 0.24, 1, 1.15, 1); // L hip
-  blob(0.26, 0.62, 0.02, 0.24, 1, 1.15, 1);  // R hip
-  blob(0, 1.5, 0.03, 0.2, 1.05, 0.9, 1.05);  // neck
-  blob(0, 0.5, -0.28, 0.2, 1, 1, 1);         // tail base
+  // Small joint masses tucked mostly INSIDE the body so the thin limbs emerge
+  // smoothly without bulky shoulders/thighs.
+  blob(-0.22, 1.4, 0.02, 0.12, 1, 1.1, 1);   // L shoulder
+  blob(0.22, 1.4, 0.02, 0.12, 1, 1.1, 1);    // R shoulder
+  blob(-0.17, 0.62, 0.0, 0.13, 1, 1.1, 1);   // L hip
+  blob(0.17, 0.62, 0.0, 0.13, 1, 1.1, 1);    // R hip
+  blob(0, 1.44, 0.03, 0.22, 1.05, 0.9, 1.05); // neck
+  blob(0, 0.5, -0.28, 0.15, 1, 1, 1);        // tail base
 
   // ---- Hind legs (thigh -> shin -> foot), embedded into the hip blob ------
   function leg(side) {
     const g = new THREE.Group();
-    g.position.set(side * 0.26, 0.66, 0.0);
-    const thigh = caps(0.15, 0.26, MAT.fur);
+    g.position.set(side * 0.17, 0.64, 0.0);
+    const thigh = caps(0.1, 0.26, MAT.fur);
     thigh.position.y = -0.14;
     thigh.rotation.x = 0.35;
     g.add(thigh);
     const knee = new THREE.Group();
     knee.position.set(0, -0.32, 0.1);
     g.add(knee);
-    const shin = caps(0.11, 0.22, MAT.fur);
+    const shin = caps(0.082, 0.22, MAT.fur);
     shin.position.y = -0.12;
     shin.rotation.x = -0.2;
     knee.add(shin);
     const foot = sph(0.12, MAT.pink, 7);
-    foot.scale.set(0.8, 0.45, 1.8);
+    foot.scale.set(0.78, 0.4, 2.0);
     foot.position.set(0, -0.26, 0.16);
     knee.add(foot);
     for (let k = -1; k <= 1; k++) {
@@ -172,10 +174,10 @@ export function buildRat() {
   // ---- Arms (shoulder -> elbow -> paw): capsules, elbow bends FORWARD ------
   function arm(side) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(side * 0.3, 1.42, 0.05);
+    shoulder.position.set(side * 0.23, 1.42, 0.04);
     shoulder.rotation.set(-0.35, 0, side * 0.08);
 
-    const upper = caps(0.11, 0.3, MAT.fur);
+    const upper = caps(0.078, 0.3, MAT.fur);
     upper.position.y = -0.18; // top embedded in the shoulder blob
     shoulder.add(upper);
 
@@ -184,10 +186,10 @@ export function buildRat() {
     elbow.rotation.set(-0.5, 0, 0); // negative = forearm folds forward/up
     shoulder.add(elbow);
 
-    const elbowBlob = sph(0.11, MAT.fur, 7);
+    const elbowBlob = sph(0.078, MAT.fur, 7);
     elbow.add(elbowBlob);
 
-    const fore = caps(0.092, 0.26, MAT.fur);
+    const fore = caps(0.066, 0.26, MAT.fur);
     fore.position.y = -0.15;
     elbow.add(fore);
 
@@ -209,28 +211,29 @@ export function buildRat() {
 
   // ---- Neck + head (big wedge head, long pointed snout) ------------------
   const neck = new THREE.Group();
-  neck.position.set(0, 1.5, 0.04);
+  neck.position.set(0, 1.46, 0.04);
   bodyGroup.add(neck);
 
   const head = new THREE.Group();
-  head.position.y = 0.12;
+  head.position.y = 0.16;
   head.rotation.x = 0.14; // nose tipped down/forward
   neck.add(head);
 
-  // Skull blends into the neck (overlaps downward) so the head doesn't float.
-  const skull = sph(0.3, MAT.fur, 9);
-  skull.scale.set(0.94, 0.86, 1.16);
+  // Big skull (the reference rat is big-headed) blending down into the neck.
+  const skull = sph(0.36, MAT.fur, 9);
+  skull.scale.set(0.95, 0.86, 1.2);
   skull.position.set(0, -0.02, 0.02);
   head.add(skull);
 
-  const snout = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.6, 8), MAT.fur);
+  // Long pointed snout.
+  const snout = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.7, 8), MAT.fur);
   snout.rotation.x = Math.PI / 2;
-  snout.position.set(0, -0.06, 0.42);
+  snout.position.set(0, -0.07, 0.46);
   snout.scale.set(1, 0.76, 1);
   head.add(snout);
 
   const nose = sph(0.055, MAT.pinkDark, 6);
-  nose.position.set(0, -0.08, 0.72);
+  nose.position.set(0, -0.09, 0.82);
   head.add(nose);
 
   // Lower jaw.
@@ -268,8 +271,8 @@ export function buildRat() {
   // Ears: large, thin, rounded; set wide, angled out.
   function ear(side) {
     const g = new THREE.Group();
-    g.position.set(side * 0.25, 0.16, -0.04);
-    const outer = sph(0.19, MAT.fur, 9);
+    g.position.set(side * 0.27, 0.2, -0.05);
+    const outer = sph(0.21, MAT.fur, 9);
     outer.scale.set(1.15, 1.2, 0.22);
     g.add(outer);
     const inner = sph(0.12, MAT.pink, 8);

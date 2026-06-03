@@ -293,6 +293,7 @@ function grabRat() {
 function dropRat() {
   held = false;
   setState('land');
+  for (let i = 0; i < 4; i++) spawnFloat('z', '💨'); // landing dust
 }
 
 // ---------------------------------------------------------------------------
@@ -751,8 +752,8 @@ function applyPose(t, dt, hs, bs, curDist) {
 
   // Belly: a subtle lighter underside at rest; bulges into a pot belly when full.
   const bScale = 1 + cur.belly * 0.6;
-  rat.belly.scale.set(0.82 * bScale, 0.95 * bScale, 0.5 * (1 + cur.belly * 0.7));
-  rat.belly.position.set(0, 0.84 - cur.belly * 0.06, 0.18 + cur.belly * 0.16);
+  rat.belly.scale.set(0.9 * bScale, 1.0 * bScale, 0.6 * (1 + cur.belly * 0.7));
+  rat.belly.position.set(0, 0.72 - cur.belly * 0.05, 0.18 + cur.belly * 0.16);
 
   // Root posture + idle sway.
   const sway = Math.sin(t * 0.9) * 0.02;
@@ -867,18 +868,18 @@ function applyPose(t, dt, hs, bs, curDist) {
     rat.neck.rotation.x += Math.sin(t * 7.5) * cur.groom * 0.06;
   }
 
-  // Held by the scruff: limbs dangle limp, body sways like a pendulum, legs kick.
+  // Held by the scruff: flailing arms, kicking legs, an indignant wriggle.
   if (state === 'held') {
-    const sway = Math.sin(t * 2.6) * 0.14;
-    const kick = Math.sin(t * 9) * 0.2;
+    const f = Math.sin(t * 13);
+    const f2 = Math.sin(t * 13 + 1.7);
     rat.root.position.y = 0.16;
-    rat.root.rotation.z += sway;
-    rat.armL.shoulder.rotation.set(0.2 + sway, 0, 0.22);
-    rat.armR.shoulder.rotation.set(0.2 - sway, 0, -0.22);
-    rat.armL.elbow.rotation.x = -0.12;
-    rat.armR.elbow.rotation.x = -0.12;
-    rat.legL.rotation.set(0.22 + kick, 0, 0.14);
-    rat.legR.rotation.set(0.22 - kick, 0, -0.14);
+    rat.root.rotation.z += Math.sin(t * 4) * 0.18;
+    rat.armL.shoulder.rotation.set(0.0 + f * 0.55, 0, 0.26);
+    rat.armR.shoulder.rotation.set(0.0 - f * 0.55, 0, -0.26);
+    rat.armL.elbow.rotation.x = -0.3 - Math.abs(f) * 0.35;
+    rat.armR.elbow.rotation.x = -0.3 - Math.abs(f2) * 0.35;
+    rat.legL.rotation.set(0.12 + f2 * 0.5, 0, 0.17);
+    rat.legR.rotation.set(0.12 - f * 0.5, 0, -0.17);
   }
 
   // ---- Tail wag ----
