@@ -1,6 +1,7 @@
 import * as THREE from './vendor/three.module.js';
 import { buildRat } from './rat.js';
 import { createLife } from './life.js';
+import { createPersonality } from './personality.js';
 
 // ---------------------------------------------------------------------------
 // Scene / renderer / camera
@@ -83,6 +84,16 @@ let curActivity = 'lounge';
 let walkAmt = 0;          // 0..1 eased "how much walking" (drives leg/arm gait)
 let gaitPhase = 0;        // 0..1 gait phase from the life brain
 
+// The rat's "soul": personality, mood, bond, and a little inner-life director.
+const soul = createPersonality();
+try { soul.load(JSON.parse(localStorage.getItem('deskrat.soul'))); } catch {}
+let soulClock = 0;        // host-provided monotonic ms for the soul
+let dir = {               // latest soul directives (mood, expr biases, etc.)
+  mood: 'content', valence: 0, arousal: 0.3,
+  expr: { eyeOpen: 0, earPerk: 0, earBack: 0, tailAmp: 0, tailSpeed: 0, browTilt: 0 },
+  prefer: null, say: null, emote: null, special: null,
+};
+
 function setState(s) {
   state = s;
   stateT = 0;
@@ -110,19 +121,25 @@ function loadStats() {
   return { ...STAT_DEFAULT };
 }
 let saveTimer = 0;
-function saveStats() { try { localStorage.setItem('deskrat.stats', JSON.stringify(stats)); } catch {} }
+function saveStats() {
+  try {
+    localStorage.setItem('deskrat.stats', JSON.stringify(stats));
+    localStorage.setItem('deskrat.soul', JSON.stringify(soul.serialize()));
+  } catch {}
+}
 const clamp01100 = (v) => Math.max(0, Math.min(100, v));
 
 // Natural drift of stats over time.
 function tickStats(dt) {
-  stats.hunger = clamp01100(stats.hunger + dt * 0.45);          // gets hungry
-  let eRate = 0.25;
-  if (state === 'dance') eRate = 6;
-  else if (curPosture === 'sleep') eRate = -9;                  // naps restore energy
-  else if (curPosture === 'walk') eRate = curActivity === 'zoomies' ? 4 : 1;
+  // Stats evolve over TENS OF MINUTES (constants designed by the soul system).
+  stats.hunger = clamp01100(stats.hunger + dt * 0.040);        // 0->100 in ~42 min
+  let eRate = 0.030;                                            // idle drain ~55 min
+  if (state === 'dance') eRate = 0.20;
+  else if (curPosture === 'sleep') eRate = -0.55;             // nap refills in ~3 min
+  else if (curPosture === 'walk') eRate = curActivity === 'zoomies' ? 0.12 : 0.040;
   stats.energy = clamp01100(stats.energy - dt * eRate);
-  stats.affection = clamp01100(stats.affection + (55 - stats.affection) * dt * 0.01); // drifts to neutral
-  stats.weight = clamp01100(stats.weight - dt * 0.12);          // slowly slims down
+  stats.affection = clamp01100(stats.affection + (55 - stats.affection) * dt * 0.0015); // gentle drift
+  stats.weight = clamp01100(stats.weight - dt * 0.010);        // very slowly slims
   // Belly baseline follows weight when not actively full from a meal.
   fullness = Math.max(fullness, stats.weight / 100);
   saveTimer += dt;
@@ -178,12 +195,14 @@ let dragActive = false;
 let lastDragT = 0;
 const dragPt = { x: 0, y: 0 };
 
+let lastDragEvent = -10;
 function onDragOver(e) {
   e.preventDefault();
   dragActive = true;
   lastDragT = stateClock;
   dragPt.x = e.clientX;
   dragPt.y = e.clientY;
+  if (stateClock - lastDragEvent > 1.2) { lastDragEvent = stateClock; soul.event('drag'); }
 }
 window.addEventListener('dragenter', onDragOver);
 window.addEventListener('dragover', onDragOver);
@@ -210,7 +229,7 @@ if (window.deskrat?.dev) {
 // Tray commands.
 window.deskrat.onCmd?.((c) => {
   if (c === 'dance') {
-    if (stats.energy > 20) { say('♪', 1.0); setState('dance'); }
+    if (stats.energy > 20) { soul.event('dance'); say('♪', 1.0); setState('dance'); }
     else say('지금은... 좀 피곤해.', 1.4);
   }
 });
@@ -238,7 +257,7 @@ window.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('dblclick', (e) => {
   if (!overRat(e.clientX, e.clientY)) return;
   if (pokeTimer) { clearTimeout(pokeTimer); pokeTimer = null; }
-  if (stats.energy > 25) { say('♪', 1.0); setState('dance'); }
+  if (stats.energy > 25) { soul.event('dance'); say('♪', 1.0); setState('dance'); }
   else { setState('idle'); say('지금은... 좀 피곤해.', 1.4); }
 });
 
@@ -273,6 +292,7 @@ function poke() {
   annoy = Math.min(annoy + 1, 4);
   stats.affection = clamp01100(stats.affection - 7);
   stats.energy = clamp01100(stats.energy - 2);
+  soul.event('poke');
   setState('poke');
   const lines = ['야!', '하지 마.', '아 진짜 그만!', '한 번만 더 해봐.'];
   say(lines[Math.min(annoy - 1, 3)], 1.2);
@@ -280,6 +300,7 @@ function poke() {
 function pet() {
   stats.affection = clamp01100(stats.affection + 6);
   annoy = Math.max(0, annoy - 1);
+  soul.event('pet');
   setState('pet');
   data.warm = 0;
   const lines = stats.affection > 80
@@ -336,6 +357,28 @@ function frame() {
     : 9999;
 
   updateState(dt, hs, bs, curDist);
+
+  // ---- soul: mood, personality, inner-life director ----
+  soulClock += dt * 1000;
+  dir = soul.update(dt, {
+    stats,
+    cursorNear: curDist < 300,
+    dragActive,
+    busy: state !== 'idle',
+    activity: curActivity,
+    clockMs: soulClock,
+  }) || dir;
+  if (dir.say && bubbleTimer <= 0) say(dir.say, 1.8); // don't stomp interaction lines
+  if (dir.emote) {
+    const map = { spark: ['note', '✨'], heart: ['note', '❤'], note: ['note', '♪'],
+      sweat: ['z', '💦'], anger: ['z', '💢'], zzz: ['z', '💤'], dots: ['z', '…'] };
+    const e = map[dir.emote];
+    if (e) spawnFloat(e[0], e[1]);
+  }
+  if (dir.special && state === 'idle') {
+    if (dir.special === 'sulk_turn') setState('huff');
+    else if (dir.special === 'happy_wiggle' && stats.energy > 30) setState('dance');
+  }
 
   // ---- ease cur -> target ----
   const k = 1 - Math.pow(0.001, dt); // ~smoothing
@@ -546,6 +589,7 @@ function runEat(dt) {
       stats.weight = clamp01100(stats.weight + portion * 40);
       stats.affection = clamp01100(stats.affection + 3);
       stats.fed = (stats.fed || 0) + 1;
+      soul.event('feed', mb);
       saveStats();
       if (big) say('우웁... 배불러', 1.8);
       else say(['잘 먹었어.', '냠.', '괜찮은 맛이네.'][(Math.random() * 3) | 0], 1.2);
@@ -570,7 +614,9 @@ function runLife(dt) {
   };
   const act = life.update(dt, ctx);
   curActivity = act.name;
+  const wasSleeping = curPosture === 'sleep';
   curPosture = act.posture;
+  if (wasSleeping && curPosture !== 'sleep') soul.event('wake');
 
   // ---- window movement (the rat walking across the desktop) ----
   if (act.moveWindowTo && act.speedPx > 0) {
@@ -589,7 +635,7 @@ function runLife(dt) {
   walkAmt = lerp(walkAmt, walking ? 1 : 0, 1 - Math.pow(0.004, dt));
   if (walking) gaitPhase = act.stepPhase;
   // Turn toward a 3/4 walking profile while moving; face the viewer otherwise.
-  target.bodyYaw = walking ? -act.facing * 1.15 : 0;
+  target.bodyYaw = walking ? act.facing * 1.15 : 0;
 
   // ---- one-shot lines + floating emotes ----
   if (act.say) say(act.say, 1.6);
@@ -676,11 +722,16 @@ function applyPose(t, dt, hs, bs, curDist) {
   blink = lerp(blink, 1, 0.25);
   nextBlink -= dt;
   if (nextBlink <= 0) { blink = 0; nextBlink = 2.5 + Math.random() * 3.5; }
-  const open = THREE.MathUtils.clamp(cur.eyeOpen, 0, 1.2) * blink;
-  for (const e of [rat.eyeL, rat.eyeR]) {
+  const ex = dir.expr || {};
+  const open = THREE.MathUtils.clamp(cur.eyeOpen + (ex.eyeOpen || 0), 0, 1.2) * blink;
+  const brow = ex.browTilt || 0; // mood slant: <0 furrowed/grumpy, >0 raised/curious
+  [rat.eyeL, rat.eyeR].forEach((e, i) => {
+    const side = i === 0 ? -1 : 1;
     e.lid.rotation.x = lerp(0.5, -0.85, Math.min(open, 1));
+    // Slant the upper lid so the inner corner drops (angry) or lifts (surprised).
+    e.lid.rotation.z = side * brow * 0.6;
     e.group.scale.y = lerp(0.18, 1, Math.min(open, 1)) * (open > 1 ? 1.1 : 1);
-  }
+  });
 
   // ---- Ears: perk / fold back / twitch ----
   earTwitch = lerp(earTwitch, 0, 0.2);
@@ -690,8 +741,10 @@ function applyPose(t, dt, hs, bs, curDist) {
     idleLookTarget = (Math.random() - 0.5) * 0.5 - 0.1;
     nextFidget = 3 + Math.random() * 5;
   }
-  const earX = cur.earBack * 1.1 - cur.earPerk * 0.4;
-  const earSpread = cur.earPerk * 0.25 - cur.earBack * 0.3;
+  const earBackB = cur.earBack + (ex.earBack || 0);
+  const earPerkB = cur.earPerk + (ex.earPerk || 0);
+  const earX = earBackB * 1.1 - earPerkB * 0.4;
+  const earSpread = earPerkB * 0.25 - earBackB * 0.3;
   rat.earL.rotation.set(base.earL.x + earX + earTwitch, base.earL.y - earSpread, base.earL.z - cur.earBack * 0.2);
   rat.earR.rotation.set(base.earR.x + earX - earTwitch, base.earR.y + earSpread, base.earR.z + cur.earBack * 0.2);
 
@@ -701,7 +754,8 @@ function applyPose(t, dt, hs, bs, curDist) {
   const shZin = gin * 0.4;
   rat.armL.shoulder.rotation.set(shX + cur.armSwingL, 0, base.shoulderL.z + shZin - cur.armSpread);
   rat.armR.shoulder.rotation.set(shX + cur.armSwingR, 0, base.shoulderR.z - shZin + cur.armSpread);
-  const elX = base.elbowL.x - raise * 0.4 + gin * 1.05;
+  // Negative elbow = forearm folds forward/up. Reach straightens; grab folds to mouth.
+  const elX = base.elbowL.x + raise * 0.45 - gin * 0.9;
   rat.armL.elbow.rotation.x = elX;
   rat.armR.elbow.rotation.x = elX;
   // Begging wobble in the paws.
@@ -739,9 +793,11 @@ function applyPose(t, dt, hs, bs, curDist) {
   }
 
   // ---- Tail wag ----
+  const tAmp = cur.tailAmp + (ex.tailAmp || 0);
+  const tSpd = cur.tailSpeed + (ex.tailSpeed || 0);
   rat.tailSegs.forEach((seg, i) => {
-    const phase = t * cur.tailSpeed - i * 0.5;
-    seg.rotation.y = Math.sin(phase) * cur.tailAmp;
+    const phase = t * tSpd - i * 0.5;
+    seg.rotation.y = Math.sin(phase) * tAmp;
     seg.rotation.x = 0.12 + Math.cos(phase * 0.5) * 0.05;
   });
 }
