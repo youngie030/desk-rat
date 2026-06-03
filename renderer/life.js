@@ -361,8 +361,12 @@ export function createLife() {
           if (Math.abs(dx) > 0.5) {
             S.facing = dx < 0 ? -1 : 1;
           }
-          // 보행 위상 진행 / advance gait phase by dt * cadence.
-          const cadence = S.speedPx / 40; // 빠를수록 다리 빨리 / faster = quicker legs
+          // 보행 위상 진행: 한 보행 주기가 STRIDE_PX 만큼의 실제 이동에 대응하도록
+          // cadence를 이동 속도에서 유도 → 발이 미끄러지지 않는다.
+          // advance gait phase; cadence derived from travel speed so one cycle ==
+          // STRIDE_PX of window travel (feet stop sliding).
+          const STRIDE_PX = 46;
+          const cadence = S.speedPx / STRIDE_PX;
           S.stepPhase = (S.stepPhase + d * cadence) % 1;
           if (S.stepPhase < 0) S.stepPhase += 1;
 

@@ -22,7 +22,7 @@ function makeTex(size, base, speckle, opts = {}) {
     const x = (Math.random() * size) | 0;
     const y = (Math.random() * size) | 0;
     const d = (Math.random() - 0.5) * 2 * speckle;
-    const warm = Math.random() < 0.35 ? 8 : 0;
+    const warm = Math.random() < 0.4 ? 12 : 0;
     ctx.fillStyle = `rgba(${clampByte(r + d + warm)},${clampByte(g + d)},${clampByte(b + d - warm)},0.5)`;
     ctx.fillRect(x, y, 1, 1);
   }
@@ -35,9 +35,9 @@ function makeTex(size, base, speckle, opts = {}) {
 }
 
 const TEX = {
-  fur: makeTex(48, 0x5f574d, 50, { density: 1.0 }),
+  fur: makeTex(48, 0x554d42, 60, { density: 1.0 }),
   furDark: makeTex(40, 0x554e45, 48, { density: 0.9 }),
-  belly: makeTex(40, 0x837a6d, 32, { density: 0.8 }),
+  belly: makeTex(40, 0x8f8475, 32, { density: 0.8 }),
   pink: makeTex(24, 0xc89a8d, 22, { density: 0.5 }),
   pinkDark: makeTex(24, 0xa9756a, 24, { density: 0.5 }),
 };
@@ -83,8 +83,12 @@ export function buildRat() {
     const cols = [];
     for (let i = 0; i < pos.count; i++) {
       const y = pos.getY(i), z = pos.getZ(i);
-      let t = 0.94 + z * 0.5 - Math.max(0, y - 0.9) * 0.12;
-      t = Math.max(0.7, Math.min(1.14, t));
+      // Darker along the back (-z) and upper body; lighter on the low belly.
+      let t = 1.0 - z * 0.42 - Math.max(0, y - 0.7) * 0.1 + Math.max(0, 0.7 - y) * 0.12;
+      t = Math.max(0.62, Math.min(1.18, t));
+      // Subtle darker spine stripe down the middle of the back.
+      const stripe = Math.max(0, -z - 0.18) * (1 - Math.min(1, Math.abs(pos.getX(i)) * 6));
+      t = Math.max(0.55, t - stripe * 0.7);
       cols.push(t, t, t);
     }
     torsoGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
@@ -116,8 +120,9 @@ export function buildRat() {
   blob(0.22, 1.4, 0.02, 0.12, 1, 1.1, 1);    // R shoulder
   blob(-0.17, 0.62, 0.0, 0.13, 1, 1.1, 1);   // L hip
   blob(0.17, 0.62, 0.0, 0.13, 1, 1.1, 1);    // R hip
-  blob(0, 1.44, 0.03, 0.22, 1.05, 0.9, 1.05); // neck
-  blob(0, 0.5, -0.28, 0.15, 1, 1, 1);        // tail base
+  blob(0, 1.46, 0.03, 0.25, 1.08, 1.0, 1.05); // neck
+  blob(0, 1.62, 0.04, 0.18, 1.1, 0.8, 1.0);   // collar (bridges neck->skull seam)
+  blob(0, 0.5, -0.28, 0.15, 1, 1, 1);         // tail base
 
   // ---- Hind legs (thigh -> shin -> foot), embedded into the hip blob ------
   function leg(side) {
@@ -141,7 +146,7 @@ export function buildRat() {
     for (let k = -1; k <= 1; k++) {
       const toe = sph(0.045, MAT.pink, 5);
       toe.scale.set(1, 0.7, 1.4);
-      toe.position.set(k * 0.06, -0.27, 0.34);
+      toe.position.set(k * 0.075, -0.27, 0.34);
       knee.add(toe);
     }
     return Object.assign(g, { knee });
@@ -199,7 +204,8 @@ export function buildRat() {
     elbow.add(paw);
     for (let k = -1; k <= 1; k++) {
       const fin = sph(0.032, MAT.pink, 5);
-      fin.position.set(k * 0.045, -0.41, 0.05);
+      fin.scale.set(1, 1, 1.5); // little forward digits
+      fin.position.set(k * 0.04, -0.4 - Math.abs(k) * 0.015, 0.07);
       elbow.add(fin);
     }
 
@@ -222,18 +228,26 @@ export function buildRat() {
   // Big skull (the reference rat is big-headed) blending down into the neck.
   const skull = sph(0.36, MAT.fur, 9);
   skull.scale.set(0.95, 0.86, 1.2);
-  skull.position.set(0, -0.02, 0.02);
+  skull.position.set(0, -0.05, 0.02); // sink slightly into the collar
   head.add(skull);
+
+  // Cheek/muzzle swell so the eyes sit on a face, not perch on a ball.
+  for (const s of [-1, 1]) {
+    const cheek = sph(0.13, MAT.fur, 7);
+    cheek.scale.set(0.9, 0.7, 1.1);
+    cheek.position.set(s * 0.15, -0.1, 0.3);
+    head.add(cheek);
+  }
 
   // Long pointed snout.
   const snout = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.7, 8), MAT.fur);
   snout.rotation.x = Math.PI / 2;
   snout.position.set(0, -0.07, 0.46);
-  snout.scale.set(1, 0.76, 1);
+  snout.scale.set(0.92, 0.72, 1.06);
   head.add(snout);
 
   const nose = sph(0.055, MAT.pinkDark, 6);
-  nose.position.set(0, -0.09, 0.82);
+  nose.position.set(0, -0.1, 0.85);
   head.add(nose);
 
   // Lower jaw.
@@ -252,12 +266,14 @@ export function buildRat() {
   // Eyes: small beads, highlight parented to the eyeball (no float).
   function eye(side) {
     const group = new THREE.Group();
-    group.position.set(side * 0.16, 0.07, 0.28);
-    const ball = sph(0.062, plainMat(0x120f08, 0.35), 8);
+    group.position.set(side * 0.175, -0.005, 0.40); // lower & forward onto the muzzle
+    const ball = sph(0.072, plainMat(0x120f08, 0.35), 8);
     ball.scale.z = 0.75;
     group.add(ball);
-    const glint = sph(0.018, plainMat(0xffffff, 0.1), 5);
-    glint.position.set(side * 0.018, 0.025, 0.045);
+    const glint = sph(0.024, new THREE.MeshStandardMaterial({
+      color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.9, roughness: 0.1, flatShading: true,
+    }), 5);
+    glint.position.set(side * 0.022, 0.03, 0.05);
     ball.add(glint);
     const lid = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), MAT.fur);
     lid.rotation.x = -0.25;
@@ -275,9 +291,9 @@ export function buildRat() {
     const outer = sph(0.21, MAT.fur, 9);
     outer.scale.set(1.15, 1.2, 0.22);
     g.add(outer);
-    const inner = sph(0.12, MAT.pink, 8);
-    inner.scale.set(1.0, 1.15, 0.2);
-    inner.position.z = 0.04;
+    const inner = sph(0.13, MAT.pinkDark, 8); // darker concha = ear-canal shadow
+    inner.scale.set(0.82, 1.0, 0.18);
+    inner.position.z = 0.05;
     g.add(inner);
     g.rotation.set(0.04, side * 0.72, side * 0.4);
     return g;
