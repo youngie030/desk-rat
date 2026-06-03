@@ -1,0 +1,17 @@
+{
+  "name": "desk-rat",
+  "version": "0.1.0",
+  "description": "A chic dancing rat desktop pet that eats files you drag into it (sends them to the Recycle Bin).",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "youngie030",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  }
+}
