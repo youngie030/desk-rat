@@ -56,7 +56,7 @@ const def = {
   jaw: 0,
   eyeOpen: 0.52, // chic = half-lidded
   earBack: 0, earPerk: 0,
-  armRaise: 0, armIn: 0, armSpread: 0,
+  armRaise: 0, armIn: 0, armSpread: 0, armSwingL: 0, armSwingR: 0,
   belly: 0,
   tailAmp: 0.13, tailSpeed: 1.4,
   lookGain: 0, // how strongly the neck follows the cursor
@@ -87,6 +87,73 @@ function say(text, dur = 1.6) {
   bubbleEl.textContent = text;
   bubbleEl.classList.add('show');
   bubbleTimer = dur;
+}
+
+// ---------------------------------------------------------------------------
+// Tamagotchi stats (persisted) — hunger, affection, energy, weight
+// ---------------------------------------------------------------------------
+const STAT_DEFAULT = { hunger: 35, affection: 55, energy: 85, weight: 0, fed: 0 };
+let stats = loadStats();
+function loadStats() {
+  try {
+    const s = JSON.parse(localStorage.getItem('deskrat.stats'));
+    if (s && typeof s.hunger === 'number') return Object.assign({ ...STAT_DEFAULT }, s);
+  } catch {}
+  return { ...STAT_DEFAULT };
+}
+let saveTimer = 0;
+function saveStats() { try { localStorage.setItem('deskrat.stats', JSON.stringify(stats)); } catch {} }
+const clamp01100 = (v) => Math.max(0, Math.min(100, v));
+
+// Natural drift of stats over time.
+function tickStats(dt) {
+  stats.hunger = clamp01100(stats.hunger + dt * 0.45);          // gets hungry
+  stats.energy = clamp01100(stats.energy - dt * (state === 'dance' ? 6 : state === 'sleep' ? -9 : 0.25));
+  stats.affection = clamp01100(stats.affection + (55 - stats.affection) * dt * 0.01); // drifts to neutral
+  stats.weight = clamp01100(stats.weight - dt * 0.12);          // slowly slims down
+  // Belly baseline follows weight when not actively full from a meal.
+  fullness = Math.max(fullness, stats.weight / 100);
+  saveTimer += dt;
+  if (saveTimer > 3) { saveTimer = 0; saveStats(); }
+}
+
+// Overall mood 0..1 from the stats (high = happy & lively).
+function mood() {
+  const hungerPenalty = stats.hunger > 60 ? (stats.hunger - 60) / 40 : 0;
+  const energyOk = stats.energy / 100;
+  return clamp01100((stats.affection - hungerPenalty * 45) * energyOk) / 100;
+}
+
+// ---- Stat panel (shown while the cursor is over the rat) ----
+const panel = document.createElement('div');
+panel.id = 'stats';
+panel.style.cssText =
+  'position:fixed;left:50%;bottom:8px;transform:translateX(-50%);' +
+  'display:flex;gap:8px;padding:6px 10px;border-radius:12px;' +
+  'background:rgba(28,24,20,0.82);font:600 10px/1 "Segoe UI",sans-serif;color:#f0e6d8;' +
+  'opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap;z-index:50;';
+function bar(label, color) {
+  const w = document.createElement('div');
+  w.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px;';
+  const t = document.createElement('div'); t.textContent = label;
+  const track = document.createElement('div');
+  track.style.cssText = 'width:46px;height:6px;border-radius:3px;background:rgba(255,255,255,0.16);overflow:hidden;';
+  const fill = document.createElement('div');
+  fill.style.cssText = `height:100%;width:50%;background:${color};border-radius:3px;transition:width .25s;`;
+  track.appendChild(fill); w.appendChild(t); w.appendChild(track);
+  return { w, fill };
+}
+const barHunger = bar('배고픔', '#e8a23c');
+const barLove = bar('애정', '#e85c7a');
+const barEnergy = bar('기력', '#5cc8e8');
+panel.append(barHunger.w, barLove.w, barEnergy.w);
+document.body.appendChild(panel);
+function updatePanel(show) {
+  panel.style.opacity = show ? '1' : '0';
+  if (!show) return;
+  barHunger.fill.style.width = (100 - stats.hunger) + '%'; // shown as "fullness"
+  barLove.fill.style.width = stats.affection + '%';
+  barEnergy.fill.style.width = stats.energy + '%';
 }
 
 // ---------------------------------------------------------------------------
@@ -128,18 +195,40 @@ if (window.deskrat?.dev) {
   window.__DBG = d;
 }
 
+// Tray commands.
+window.deskrat.onCmd?.((c) => {
+  if (c === 'dance') {
+    if (stats.energy > 20) { say('♪', 1.0); setState('dance'); }
+    else say('지금은... 좀 피곤해.', 1.4);
+  }
+});
+
 // Dev-only auto-feed (DESKRAT_TEST=1).
 window.deskrat.onDevEat?.((p) => { startEat([p]); });
 // Dev-only pose tour (DESKRAT_DEMO=1).
-window.deskrat.onDevPose?.((p) => { setState('demo'); if (p === 'TOUR') data.tour = true; else data.pose = p; });
+window.deskrat.onDevPose?.((p) => { setState('demo'); if (p === 'TOUR') { data.tour = true; console.log('[deskrat] TOURSTART'); } else data.pose = p; });
 
-// Clicks: left = poke, right = pet.
+// Clicks: left = poke (single), double-left = dance, right = pet.
+let pokeTimer = null;
 window.addEventListener('mousedown', (e) => {
   if (!overRat(e.clientX, e.clientY)) return;
-  if (e.button === 0) poke();
-  else if (e.button === 2) pet();
+  if (e.button === 0) {
+    // Defer the poke so a double-click can cancel it into a dance.
+    if (pokeTimer) clearTimeout(pokeTimer);
+    pokeTimer = setTimeout(() => { pokeTimer = null; poke(); }, 240);
+  } else if (e.button === 2) {
+    pet();
+  }
 });
 window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Double-click: ask the rat to dance (if it has the energy).
+window.addEventListener('dblclick', (e) => {
+  if (!overRat(e.clientX, e.clientY)) return;
+  if (pokeTimer) { clearTimeout(pokeTimer); pokeTimer = null; }
+  if (stats.energy > 25) { say('♪', 1.0); setState('dance'); }
+  else { setState('idle'); say('지금은... 좀 피곤해.', 1.4); }
+});
 
 // ---------------------------------------------------------------------------
 // Projection helpers
@@ -170,13 +259,21 @@ function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 // ---------------------------------------------------------------------------
 function poke() {
   annoy = Math.min(annoy + 1, 4);
+  stats.affection = clamp01100(stats.affection - 7);
+  stats.energy = clamp01100(stats.energy - 2);
   setState('poke');
-  say(annoy >= 3 ? '아 진짜 그만!' : '야!', 1.2);
+  const lines = ['야!', '하지 마.', '아 진짜 그만!', '한 번만 더 해봐.'];
+  say(lines[Math.min(annoy - 1, 3)], 1.2);
 }
 function pet() {
+  stats.affection = clamp01100(stats.affection + 6);
+  annoy = Math.max(0, annoy - 1);
   setState('pet');
   data.warm = 0;
-  say('...뭐, 나쁘진 않네', 1.6);
+  const lines = stats.affection > 80
+    ? ['...좋아.', '그래, 거기.', '흥, 봐줄게.']
+    : ['...뭐, 나쁘진 않네', '계속해도 돼.', '흠...'];
+  say(lines[(Math.random() * lines.length) | 0], 1.6);
 }
 function startEat(paths) {
   setState('eat');
@@ -217,6 +314,8 @@ function frame() {
 
   if (dragActive && stateClock - lastDragT > 0.2) dragActive = false;
 
+  tickStats(dt);
+
   // Geometry-derived cursor relationships.
   const hs = headScreen();
   const bs = bodyScreen();
@@ -245,6 +344,9 @@ function frame() {
       `bellyScaleX=${rat.belly.scale.x.toFixed(2)} lean=${cur.bodyLean.toFixed(2)}`;
   }
 
+  // Show the stat panel while the cursor is over the rat.
+  updatePanel(cursor.inside);
+
   // Report silhouette to main for cursor hit-testing.
   window.deskrat.reportRegion({ cx: bs.x, cy: bs.y - 20, r: 150 });
 
@@ -256,16 +358,63 @@ function updateState(dt, hs, bs, curDist) {
   // Look gain: rat watches the cursor when it's reasonably near.
   const near = curDist < 300;
 
+  // Transient channels default to 0 each frame; states that want them override.
+  target.armSpread = 0; target.armSwingL = 0; target.armSwingR = 0;
+  target.rootRotZ = 0; target.rootY = 0;
+
   switch (state) {
     case 'idle': {
+      const m = mood();
+      const hungry = stats.hunger > 70;
+      // Chic idle: a bit livelier when in a good mood, droopier when low.
       Object.assign(target, {
-        eyeOpen: 0.5, earBack: 0, earPerk: 0,
-        armRaise: 0, armIn: 0, jaw: 0, bodyLean: 0,
-        tailAmp: 0.13, tailSpeed: 1.3, lookGain: near ? 0.5 : 0.12,
-        belly: fullness,
+        eyeOpen: hungry ? 0.8 : lerp(0.5, 0.66, m), earBack: 0, earPerk: m > 0.7 ? 0.25 : 0,
+        armRaise: 0, armIn: 0, jaw: 0, bodyLean: 0, armSpread: 0,
+        armSwingL: 0, armSwingR: 0,
+        tailAmp: lerp(0.08, 0.18, m), tailSpeed: lerp(0.9, 1.8, m),
+        lookGain: near ? 0.5 : 0.12, belly: fullness,
       });
       if (annoy > 0) annoy = Math.max(0, annoy - dt * 0.3);
-      if (near) setState('curious');
+      if (near) { setState('curious'); break; }
+      // Stat-driven autonomous behaviour.
+      if (stats.energy < 14) { setState('sleep'); break; }
+      data.idleT = (data.idleT || 0) + dt;
+      if (hungry && data.idleT > 6) { data.idleT = 0; say(stats.hunger > 88 ? '배고파 죽겠어...' : '...출출한데.', 1.6); }
+      // Spontaneous dance when happy, energetic and not starving.
+      if (m > 0.72 && stats.energy > 45 && stats.hunger < 55 && data.idleT > 7 && Math.random() < 0.012) {
+        setState('dance');
+      }
+      break;
+    }
+    case 'sleep': {
+      Object.assign(target, {
+        eyeOpen: 0, earBack: 0.2, earPerk: 0, bodyLean: -0.05,
+        armRaise: 0, armIn: 0, jaw: 0, lookGain: 0,
+        tailAmp: 0.04, tailSpeed: 0.5, belly: fullness,
+      });
+      data.z = (data.z || 0) + dt;
+      if (data.z > 2.4) { data.z = 0; spawnFloat('z', '💤'); }
+      // Wake up when poked/petted (handled by those), cursor close, or rested.
+      if (near || stats.energy > 80) { say('...하암.', 1.2); setState('idle'); }
+      break;
+    }
+    case 'dance': {
+      const m = mood();
+      const beat = stateT * 7.5;
+      const swing = Math.sin(beat);
+      Object.assign(target, {
+        eyeOpen: 0.9, earPerk: 1, earBack: 0, jaw: 0.18 + Math.abs(swing) * 0.18,
+        bodyLean: 0.05, lookGain: 0,
+        armSpread: 0.9, armRaise: 0.55,
+        armSwingL: swing * 0.8, armSwingR: -swing * 0.8,
+        rootRotZ: swing * 0.14, rootY: Math.abs(Math.sin(beat * 2)) * 0.12,
+        tailAmp: 0.35, tailSpeed: 6, belly: fullness,
+      });
+      if (!data.note) { say('♪', 1.0); data.note = true; }
+      data.noteT = (data.noteT || 0) + dt;
+      if (data.noteT > 0.5) { data.noteT = 0; spawnFloat('note', ['♪', '♫'][(Math.random() * 2) | 0]); }
+      if (near && stateT > 0.6) { setState('curious'); break; } // stop to greet cursor
+      if (stateT > 5 || stats.energy < 20) { setState('idle'); }
       break;
     }
     case 'curious': {
@@ -343,8 +492,9 @@ function updateState(dt, hs, bs, curDist) {
     }
     case 'demo': {
       if (data.tour) {
+        if (data.tourStart == null) data.tourStart = stateClock;
         const seq = ['reach', 'beg', 'eatgrab', 'poke', 'pet', 'full'];
-        data.pose = seq[Math.floor(stateClock / 2.6) % seq.length];
+        data.pose = seq[Math.floor((stateClock - data.tourStart) / 2.6) % seq.length];
       }
       const p = data.pose;
       const base = { lookGain: 0, belly: fullness, tailAmp: 0.15, tailSpeed: 2 };
@@ -389,10 +539,18 @@ function runEat(dt) {
   } else if (d.phase === 'gulp') {
     target.armRaise = 0.2; target.armIn = 0.2; target.jaw = 0.1;
     target.neckX = Math.sin(Math.min(stateT * 8, Math.PI)) * 0.25;
-    const big = d.size > 60 * 1024 * 1024; // >60MB = a big meal
+    const mb = d.size / (1024 * 1024);
+    const big = mb > 60; // >60MB = a big meal
     if (stateT > 0.5) {
-      fullness = Math.min(1, fullness + (big ? 0.55 : 0.18));
+      const portion = Math.min(0.6, 0.12 + mb / 120);
+      fullness = Math.min(1, fullness + portion);
+      stats.hunger = clamp01100(stats.hunger - (25 + mb * 0.4));
+      stats.weight = clamp01100(stats.weight + portion * 40);
+      stats.affection = clamp01100(stats.affection + 3);
+      stats.fed = (stats.fed || 0) + 1;
+      saveStats();
       if (big) say('우웁... 배불러', 1.8);
+      else say(['잘 먹었어.', '냠.', '괜찮은 맛이네.'][(Math.random() * 3) | 0], 1.2);
       if (fullness > 0.6) setState('full');
       else setState('curious');
     }
@@ -412,9 +570,9 @@ function applyPose(t, dt, hs, bs, curDist) {
   );
 
   // Belly fullness — a noticeable pot belly, never bigger than the body itself.
-  const bScale = 1 + cur.belly * 0.42;
-  rat.belly.scale.set(0.95 * bScale, 1.05 * bScale, 0.8 * (1 + cur.belly * 0.45));
-  rat.belly.position.set(0, 0.95 - cur.belly * 0.12, 0.28 + cur.belly * 0.14);
+  const bScale = 1 + cur.belly * 0.5;
+  rat.belly.scale.set(0.95 * bScale, 1.05 * bScale, 0.7 * (1 + cur.belly * 0.55));
+  rat.belly.position.set(0, 0.92 - cur.belly * 0.08, 0.24 + cur.belly * 0.16);
 
   // Root posture + idle sway.
   const sway = Math.sin(t * 0.9) * 0.02;
@@ -450,8 +608,8 @@ function applyPose(t, dt, hs, bs, curDist) {
   if (nextBlink <= 0) { blink = 0; nextBlink = 2.5 + Math.random() * 3.5; }
   const open = THREE.MathUtils.clamp(cur.eyeOpen, 0, 1.2) * blink;
   for (const e of [rat.eyeL, rat.eyeR]) {
-    e.lid.rotation.x = lerp(0.85, -0.55, Math.min(open, 1));
-    e.group.scale.y = lerp(0.1, 1, Math.min(open, 1)) * (open > 1 ? 1.08 : 1);
+    e.lid.rotation.x = lerp(0.5, -0.85, Math.min(open, 1));
+    e.group.scale.y = lerp(0.18, 1, Math.min(open, 1)) * (open > 1 ? 1.1 : 1);
   }
 
   // ---- Ears: perk / fold back / twitch ----
@@ -467,13 +625,13 @@ function applyPose(t, dt, hs, bs, curDist) {
   rat.earL.rotation.set(base.earL.x + earX + earTwitch, base.earL.y - earSpread, base.earL.z - cur.earBack * 0.2);
   rat.earR.rotation.set(base.earR.x + earX - earTwitch, base.earR.y + earSpread, base.earR.z + cur.earBack * 0.2);
 
-  // ---- Arms ----
+  // ---- Arms (raise = swing forward/up, in = bend up toward mouth) ----
   const raise = cur.armRaise, gin = cur.armIn;
-  const shX = base.shoulderL.x - raise * 1.5 - gin * 0.5;
-  const shZin = gin * 0.5;
-  rat.armL.shoulder.rotation.set(shX, 0, base.shoulderL.z + shZin + cur.armSpread);
-  rat.armR.shoulder.rotation.set(shX, 0, base.shoulderR.z - shZin - cur.armSpread);
-  const elX = base.elbowL.x + raise * 0.3 - gin * 1.2;
+  const shX = base.shoulderL.x - raise * 1.4 - gin * 0.4;
+  const shZin = gin * 0.4;
+  rat.armL.shoulder.rotation.set(shX + cur.armSwingL, 0, base.shoulderL.z + shZin - cur.armSpread);
+  rat.armR.shoulder.rotation.set(shX + cur.armSwingR, 0, base.shoulderR.z - shZin + cur.armSpread);
+  const elX = base.elbowL.x - raise * 0.4 + gin * 1.05;
   rat.armL.elbow.rotation.x = elX;
   rat.armR.elbow.rotation.x = elX;
   // Begging wobble in the paws.
@@ -494,6 +652,24 @@ function applyPose(t, dt, hs, bs, curDist) {
 // ---------------------------------------------------------------------------
 // Heart particles (pet reward)
 // ---------------------------------------------------------------------------
+// Floating emoji (💤 while sleeping, ♪ while dancing).
+function spawnFloat(kind, glyph) {
+  const el = document.createElement('div');
+  el.textContent = glyph;
+  const x = innerWidth / 2 + (kind === 'note' ? (Math.random() * 80 - 40) : 30);
+  const y = innerHeight * (kind === 'note' ? 0.42 : 0.3);
+  el.style.cssText =
+    'position:fixed;font-size:' + (kind === 'note' ? 20 : 22) + 'px;pointer-events:none;z-index:60;' +
+    'color:' + (kind === 'note' ? '#ffd66e' : '#bcd3ff') + ';left:' + x + 'px;top:' + y + 'px;' +
+    'transition:transform 1.4s ease-out,opacity 1.4s ease-out;opacity:0.95;';
+  document.body.appendChild(el);
+  requestAnimationFrame(() => {
+    el.style.transform = 'translate(' + (Math.random() * 40 - 20) + 'px,-70px) rotate(' + (Math.random() * 30 - 15) + 'deg)';
+    el.style.opacity = '0';
+  });
+  setTimeout(() => el.remove(), 1400);
+}
+
 function spawnHearts() {
   for (let i = 0; i < 5; i++) {
     const h = document.createElement('div');

@@ -18,5 +18,6 @@ contextBridge.exposeInMainWorld('deskrat', {
   reportRegion: (region) => ipcRenderer.send('rat-region', region),
   onDevEat: (cb) => ipcRenderer.on('dev-eat', (_e, p) => cb(p)),
   onDevPose: (cb) => ipcRenderer.on('dev-pose', (_e, p) => cb(p)),
+  onCmd: (cb) => ipcRenderer.on('cmd', (_e, c) => cb(c)),
   quit: () => ipcRenderer.send('quit-app'),
 });

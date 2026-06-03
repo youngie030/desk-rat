@@ -78,6 +78,8 @@ function createTray() {
   const menu = Menu.buildFromTemplate([
     { label: '책상 쥐 🐀  (파일을 끌어다 먹이세요)', enabled: false },
     { type: 'separator' },
+    { label: '춤추게 하기 ♪', click: () => win && win.webContents.send('cmd', 'dance') },
+    { type: 'separator' },
     { label: '종료', click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
