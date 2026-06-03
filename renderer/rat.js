@@ -74,7 +74,23 @@ export function buildRat() {
     [0.02, 0.40], [0.22, 0.45], [0.36, 0.6], [0.41, 0.8], [0.40, 1.0],
     [0.35, 1.18], [0.29, 1.34], [0.22, 1.46], [0.13, 1.54], [0.02, 1.58],
   ].map((p) => new THREE.Vector2(p[0], p[1]));
-  const torso = new THREE.Mesh(new THREE.LatheGeometry(profile, 10), MAT.fur);
+  const torsoGeo = new THREE.LatheGeometry(profile, 10);
+  // Vertex-colour shading: darker along the back/top, lighter on the belly/front,
+  // so the body has dorsal/ventral tone instead of a flat colour.
+  {
+    const pos = torsoGeo.attributes.position;
+    const cols = [];
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i), z = pos.getZ(i);
+      let t = 0.94 + z * 0.5 - Math.max(0, y - 0.9) * 0.12;
+      t = Math.max(0.7, Math.min(1.14, t));
+      cols.push(t, t, t);
+    }
+    torsoGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  }
+  const torsoMat = MAT.fur.clone();
+  torsoMat.vertexColors = true;
+  const torso = new THREE.Mesh(torsoGeo, torsoMat);
   torso.scale.z = 0.94;
   bodyGroup.add(torso);
 
@@ -120,6 +136,12 @@ export function buildRat() {
     foot.scale.set(0.8, 0.45, 1.8);
     foot.position.set(0, -0.26, 0.16);
     knee.add(foot);
+    for (let k = -1; k <= 1; k++) {
+      const toe = sph(0.045, MAT.pink, 5);
+      toe.scale.set(1, 0.7, 1.4);
+      toe.position.set(k * 0.06, -0.27, 0.34);
+      knee.add(toe);
+    }
     return Object.assign(g, { knee });
   }
   const legL = leg(-1);
@@ -173,6 +195,11 @@ export function buildRat() {
     paw.scale.set(1, 0.85, 1.2);
     paw.position.y = -0.32;
     elbow.add(paw);
+    for (let k = -1; k <= 1; k++) {
+      const fin = sph(0.032, MAT.pink, 5);
+      fin.position.set(k * 0.045, -0.41, 0.05);
+      elbow.add(fin);
+    }
 
     return { shoulder, elbow, paw };
   }

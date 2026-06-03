@@ -83,6 +83,8 @@ let curPosture = 'sit';   // posture hint currently driving the body
 let curActivity = 'lounge';
 let walkAmt = 0;          // 0..1 eased "how much walking" (drives leg/arm gait)
 let gaitPhase = 0;        // 0..1 gait phase from the life brain
+const tailChain = new Array(11).fill(0); // springy tail follow-through
+let prevRootRotY = 0, prevRootRotZ = 0;
 
 // The rat's "soul": personality, mood, bond, and a little inner-life director.
 const soul = createPersonality();
@@ -239,27 +241,59 @@ window.deskrat.onDevEat?.((p) => { startEat([p]); });
 // Dev-only pose tour (DESKRAT_DEMO=1).
 window.deskrat.onDevPose?.((p) => { setState('demo'); if (p === 'TOUR') { data.tour = true; console.log('[deskrat] TOURSTART'); } else data.pose = p; });
 
-// Clicks: left = poke (single), double-left = dance, right = pet.
+// Mouse: left-click = poke, left-DRAG = pick the rat up by the scruff, double-
+// left = dance, right-click = pet.
 let pokeTimer = null;
+let press = null;          // { sx, sy } screen coords at mousedown
+let held = false;          // currently being carried
+const grabOff = { x: 0, y: 0 };
+
+function cursorScreen() { return { x: (cursor.wx || 0) + cursor.x, y: (cursor.wy || 0) + cursor.y }; }
+
 window.addEventListener('mousedown', (e) => {
-  if (!overRat(e.clientX, e.clientY)) return;
-  if (e.button === 0) {
-    // Defer the poke so a double-click can cancel it into a dance.
+  if (e.button === 2) { if (overRat(e.clientX, e.clientY)) pet(); return; }
+  if (e.button !== 0 || !overRat(e.clientX, e.clientY)) return;
+  press = { sx: e.screenX, sy: e.screenY };
+});
+
+window.addEventListener('mouseup', (e) => {
+  if (e.button !== 0) return;
+  if (held) { dropRat(); }
+  else if (press) {
+    // A click (no drag): poke, deferred so a double-click can cancel it.
     if (pokeTimer) clearTimeout(pokeTimer);
     pokeTimer = setTimeout(() => { pokeTimer = null; poke(); }, 240);
-  } else if (e.button === 2) {
-    pet();
   }
+  press = null;
 });
+
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// Double-click: ask the rat to dance (if it has the energy).
 window.addEventListener('dblclick', (e) => {
   if (!overRat(e.clientX, e.clientY)) return;
   if (pokeTimer) { clearTimeout(pokeTimer); pokeTimer = null; }
+  if (held) return;
   if (stats.energy > 25) { soul.event('dance'); say('♪', 1.0); setState('dance'); }
   else { setState('idle'); say('지금은... 좀 피곤해.', 1.4); }
 });
+
+// Picked up by the scruff: grab so the neck sits under the cursor, then the
+// window follows the cursor (handled each frame in frame()).
+function grabRat() {
+  held = true;
+  if (pokeTimer) { clearTimeout(pokeTimer); pokeTimer = null; }
+  const scruff = worldToScreen(rat.neck, 0, 0.15, -0.1); // nape of the neck
+  grabOff.x = scruff.x;
+  grabOff.y = scruff.y;
+  soul.event('poke'); // mildly indignant about being grabbed
+  setState('held');
+  say(['야! 내려놔!', '어딜 잡아...!', '으아!', '...놔.'][(Math.random() * 4) | 0], 1.4);
+}
+
+function dropRat() {
+  held = false;
+  setState('land');
+}
 
 // ---------------------------------------------------------------------------
 // Projection helpers
@@ -347,6 +381,16 @@ function frame() {
 
   if (dragActive && stateClock - lastDragT > 0.2) dragActive = false;
 
+  // ---- Pick-up-by-the-scruff: detect drag start, then carry the window ----
+  if (press && !held) {
+    const cs = cursorScreen();
+    if (Math.hypot(cs.x - press.sx, cs.y - press.sy) > 6) grabRat();
+  }
+  if (held) {
+    const cs = cursorScreen();
+    window.deskrat.moveWindow(cs.x - grabOff.x, cs.y - grabOff.y);
+  }
+
   tickStats(dt);
 
   // Geometry-derived cursor relationships.
@@ -402,8 +446,9 @@ function frame() {
   // Show the stat panel while the cursor is over the rat.
   updatePanel(cursor.inside);
 
-  // Report silhouette to main for cursor hit-testing.
-  window.deskrat.reportRegion({ cx: bs.x, cy: bs.y - 20, r: 150 });
+  // Report silhouette to main for cursor hit-testing (wider while carried so the
+  // cursor stays "inside" and we keep receiving mouseup).
+  window.deskrat.reportRegion({ cx: bs.x, cy: bs.y - 20, r: held ? 260 : 150 });
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
@@ -515,6 +560,25 @@ function updateState(dt, hs, bs, curDist) {
         belly: fullness,
       });
       if (stateT > 1.4) { target.rootRotY = 0; target.neckY = 0; setState('idle'); }
+      break;
+    }
+    case 'held': {
+      // Dangling from the scruff: startled, ears back, head pulled up.
+      Object.assign(target, {
+        eyeOpen: 1.1, earBack: 0.7, earPerk: 0, jaw: 0.22, neckX: -0.18,
+        bodyLean: 0, armRaise: 0, armIn: 0, lookGain: 0.3,
+        tailAmp: 0.28, tailSpeed: 3.2, belly: fullness,
+      });
+      break;
+    }
+    case 'land': {
+      // Plop down: a quick squash, then back to life.
+      Object.assign(target, {
+        eyeOpen: 0.8, earBack: 0.25, earPerk: 0, jaw: 0, neckX: 0,
+        squash: stateT < 0.16 ? 0.55 : 0, lookGain: 0.2,
+        tailAmp: 0.1, tailSpeed: 1.5, belly: fullness,
+      });
+      if (stateT > 0.45) setState('idle');
       break;
     }
     case 'demo': {
@@ -765,14 +829,25 @@ function applyPose(t, dt, hs, bs, curDist) {
     rat.armR.elbow.rotation.x -= w;
   }
 
-  // Walking gait: legs swing fore/aft, arms counter-swing.
+  // Walking gait: hips swing fore/aft, knees lift on the forward swing so the
+  // feet clear the ground, with a synced body bob, roll and head nod.
   if (walkAmt > 0.01) {
     const gp = gaitPhase * Math.PI * 2;
-    const la = 0.5 * walkAmt;
-    rat.legL.rotation.x = Math.sin(gp) * la;
-    rat.legR.rotation.x = Math.sin(gp + Math.PI) * la;
-    rat.armL.shoulder.rotation.x += Math.sin(gp + Math.PI) * 0.45 * walkAmt;
-    rat.armR.shoulder.rotation.x += Math.sin(gp) * 0.45 * walkAmt;
+    const la = 0.55 * walkAmt;
+    const sL = Math.sin(gp), sR = Math.sin(gp + Math.PI);
+    rat.legL.rotation.x = sL * la;
+    rat.legR.rotation.x = sR * la;
+    // Knee bends while the leg swings forward (foot lifts), straightens on stance.
+    rat.legL.knee.rotation.x = Math.max(0, sL) * 0.9 * walkAmt;
+    rat.legR.knee.rotation.x = Math.max(0, sR) * 0.9 * walkAmt;
+    // Arms counter-swing to the legs.
+    rat.armL.shoulder.rotation.x += sR * 0.4 * walkAmt;
+    rat.armR.shoulder.rotation.x += sL * 0.4 * walkAmt;
+    // Body bob (twice per stride), gentle roll, and a head nod.
+    rat.root.position.y += (Math.abs(Math.sin(gp)) * 0.05 - 0.02) * walkAmt;
+    rat.root.rotation.z += Math.sin(gp) * 0.04 * walkAmt;
+    rat.bodyGroup.rotation.x += Math.abs(Math.cos(gp)) * 0.03 * walkAmt;
+    rat.neck.rotation.x += Math.sin(gp * 2) * 0.05 * walkAmt;
   } else if (curPosture === 'lie' || curPosture === 'sleep') {
     // Splayed-out limbs so the low posture reads as lying down, not crouching.
     rat.legL.rotation.set(-0.55, 0, 0.6);
@@ -792,12 +867,36 @@ function applyPose(t, dt, hs, bs, curDist) {
     rat.neck.rotation.x += Math.sin(t * 7.5) * cur.groom * 0.06;
   }
 
+  // Held by the scruff: limbs dangle limp, body sways like a pendulum, legs kick.
+  if (state === 'held') {
+    const sway = Math.sin(t * 2.6) * 0.14;
+    const kick = Math.sin(t * 9) * 0.2;
+    rat.root.position.y = 0.16;
+    rat.root.rotation.z += sway;
+    rat.armL.shoulder.rotation.set(0.2 + sway, 0, 0.22);
+    rat.armR.shoulder.rotation.set(0.2 - sway, 0, -0.22);
+    rat.armL.elbow.rotation.x = -0.12;
+    rat.armR.elbow.rotation.x = -0.12;
+    rat.legL.rotation.set(0.22 + kick, 0, 0.14);
+    rat.legR.rotation.set(0.22 - kick, 0, -0.14);
+  }
+
   // ---- Tail wag ----
+  // Tail follow-through: it trails the body's turns/sways with springy lag.
+  const yawVel = (rat.root.rotation.y - prevRootRotY) / Math.max(dt, 0.001);
+  const rollVel = (rat.root.rotation.z - prevRootRotZ) / Math.max(dt, 0.001);
+  prevRootRotY = rat.root.rotation.y;
+  prevRootRotZ = rat.root.rotation.z;
+  const drive = THREE.MathUtils.clamp(-yawVel * 0.22 - rollVel * 0.14, -0.7, 0.7);
+  tailChain[0] += (drive - tailChain[0]) * Math.min(1, dt * 12);
+  for (let i = 1; i < tailChain.length; i++) {
+    tailChain[i] += (tailChain[i - 1] - tailChain[i]) * Math.min(1, dt * 14);
+  }
   const tAmp = cur.tailAmp + (ex.tailAmp || 0);
   const tSpd = cur.tailSpeed + (ex.tailSpeed || 0);
   rat.tailSegs.forEach((seg, i) => {
     const phase = t * tSpd - i * 0.5;
-    seg.rotation.y = Math.sin(phase) * tAmp;
+    seg.rotation.y = Math.sin(phase) * tAmp + tailChain[i] * (0.4 + i * 0.12);
     seg.rotation.x = 0.12 + Math.cos(phase * 0.5) * 0.05;
   });
 }
