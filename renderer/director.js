@@ -202,6 +202,8 @@ const THOUGHTS = {
   // by phase (ambient flavor)
   night:   ['세상이 조용해.', '달이 밝네.', '다들 자나 봐.', '...밤은 길어.'],
   morning: ['공기가 차갑네.', '아침 햇살이 좋아.', '오늘은 뭐 하지.', '커피 냄새 난다.'],
+  day:     ['해가 중천이네.', '나른한 오후.', '낮잠 각인데.', '바닥에 뭐 떨어졌나.'],
+  evening: ['하루가 저무네.', '불빛이 따뜻해.', '...오늘도 무사히.', '저녁 공기 좋다.'],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -574,7 +576,7 @@ export function createDirector() {
         if (Math.random() < 0.5) {
           out.say = pickThought(mood, bond, phase);
           // emote: a faint "…" sometimes for a pensive beat.
-          if (!out.emote && Math.random() < 0.25) out.emote = 'dots';
+          if (!out.emote && Math.random() < 0.15) out.emote = 'dots';
         }
         S.thoughtCd = rand(28, 55); // thoughts are sparse
       }

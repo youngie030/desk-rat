@@ -27,32 +27,32 @@ function makeTex(size, base, speckle, opts = {}) {
     ctx.fillRect(x, y, 1, 1);
   }
   const tex = new THREE.CanvasTexture(c);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.LinearFilter; // smooth (matches the soft reference)
+  tex.minFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   return tex;
 }
 
 const TEX = {
-  fur: makeTex(48, 0x554d42, 60, { density: 1.0 }),
-  furDark: makeTex(40, 0x554e45, 48, { density: 0.9 }),
-  belly: makeTex(40, 0x8f8475, 32, { density: 0.8 }),
-  pink: makeTex(24, 0xc89a8d, 22, { density: 0.5 }),
-  pinkDark: makeTex(24, 0xa9756a, 24, { density: 0.5 }),
+  fur: makeTex(48, 0x7c7468, 22, { density: 0.45 }),     // neutral-warm grey
+  furDark: makeTex(40, 0x6b645a, 20, { density: 0.4 }),
+  belly: makeTex(40, 0x9d978c, 16, { density: 0.4 }),    // light warm grey
+  pink: makeTex(24, 0xcda093, 12, { density: 0.35 }),
+  pinkDark: makeTex(24, 0xb07f74, 12, { density: 0.35 }),
 };
 
 // One shared fur material instance keeps every body part visually identical so
 // the creature reads as a single skin rather than assorted props.
 const MAT = {
-  fur: new THREE.MeshStandardMaterial({ map: TEX.fur, roughness: 1, metalness: 0, flatShading: true }),
-  furDark: new THREE.MeshStandardMaterial({ map: TEX.furDark, roughness: 1, metalness: 0, flatShading: true }),
-  belly: new THREE.MeshStandardMaterial({ map: TEX.belly, roughness: 1, metalness: 0, flatShading: true }),
-  pink: new THREE.MeshStandardMaterial({ map: TEX.pink, roughness: 1, metalness: 0, flatShading: true }),
-  pinkDark: new THREE.MeshStandardMaterial({ map: TEX.pinkDark, roughness: 1, metalness: 0, flatShading: true }),
+  fur: new THREE.MeshStandardMaterial({ map: TEX.fur, roughness: 1, metalness: 0, flatShading: false }),
+  furDark: new THREE.MeshStandardMaterial({ map: TEX.furDark, roughness: 1, metalness: 0, flatShading: false }),
+  belly: new THREE.MeshStandardMaterial({ map: TEX.belly, roughness: 1, metalness: 0, flatShading: false }),
+  pink: new THREE.MeshStandardMaterial({ map: TEX.pink, roughness: 1, metalness: 0, flatShading: false }),
+  pinkDark: new THREE.MeshStandardMaterial({ map: TEX.pinkDark, roughness: 1, metalness: 0, flatShading: false }),
 };
 function plainMat(color, rough = 1) {
-  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0, flatShading: true });
+  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0, flatShading: false });
 }
 
 // Low-poly primitives.
@@ -75,7 +75,7 @@ export function buildRat() {
     [0.02, 0.38], [0.20, 0.43], [0.33, 0.54], [0.37, 0.66], [0.36, 0.82],
     [0.31, 1.0], [0.26, 1.18], [0.20, 1.34], [0.12, 1.46], [0.02, 1.52],
   ].map((p) => new THREE.Vector2(p[0], p[1]));
-  const torsoGeo = new THREE.LatheGeometry(profile, 10);
+  const torsoGeo = new THREE.LatheGeometry(profile, 14);
   // Vertex-colour shading: darker along the back/top, lighter on the belly/front,
   // so the body has dorsal/ventral tone instead of a flat colour.
   {
@@ -83,12 +83,12 @@ export function buildRat() {
     const cols = [];
     for (let i = 0; i < pos.count; i++) {
       const y = pos.getY(i), z = pos.getZ(i);
-      // Darker along the back (-z) and upper body; lighter on the low belly.
-      let t = 1.0 - z * 0.42 - Math.max(0, y - 0.7) * 0.1 + Math.max(0, 0.7 - y) * 0.12;
-      t = Math.max(0.62, Math.min(1.18, t));
-      // Subtle darker spine stripe down the middle of the back.
+      // Gentle dorsal/ventral tone (smooth shading adds its own gradient).
+      let t = 1.0 - z * 0.28 - Math.max(0, y - 0.7) * 0.1 + Math.max(0, 0.7 - y) * 0.12;
+      t = Math.max(0.78, Math.min(1.08, t));
+      // Whisper of a darker spine.
       const stripe = Math.max(0, -z - 0.18) * (1 - Math.min(1, Math.abs(pos.getX(i)) * 6));
-      t = Math.max(0.55, t - stripe * 0.7);
+      t = Math.max(0.72, t - stripe * 0.4);
       cols.push(t, t, t);
     }
     torsoGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
@@ -226,8 +226,8 @@ export function buildRat() {
   neck.add(head);
 
   // Big skull (the reference rat is big-headed) blending down into the neck.
-  const skull = sph(0.36, MAT.fur, 9);
-  skull.scale.set(0.95, 0.86, 1.2);
+  const skull = sph(0.36, MAT.fur, 12);
+  skull.scale.set(0.98, 0.9, 1.12); // rounder; muzzle provides the forward length
   skull.position.set(0, -0.05, 0.02); // sink slightly into the collar
   head.add(skull);
 
@@ -239,24 +239,24 @@ export function buildRat() {
     head.add(cheek);
   }
 
-  // Long pointed snout.
-  const snout = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.7, 8), MAT.fur);
+  // Moderate, rounded muzzle (blunter cone capped by a larger nose bead).
+  const snout = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.5, 12), MAT.fur);
   snout.rotation.x = Math.PI / 2;
-  snout.position.set(0, -0.07, 0.46);
-  snout.scale.set(0.92, 0.72, 1.06);
+  snout.position.set(0, -0.07, 0.4);
+  snout.scale.set(0.95, 0.8, 1.0);
   head.add(snout);
 
-  const nose = sph(0.055, MAT.pinkDark, 6);
-  nose.position.set(0, -0.1, 0.85);
+  const nose = sph(0.075, MAT.pinkDark, 8);
+  nose.position.set(0, -0.09, 0.74);
   head.add(nose);
 
   // Lower jaw.
   const jaw = new THREE.Group();
   jaw.position.set(0, -0.13, 0.2);
   head.add(jaw);
-  const jawMesh = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.44, 7), MAT.furDark);
+  const jawMesh = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.34, 9), MAT.furDark);
   jawMesh.rotation.x = Math.PI / 2;
-  jawMesh.position.set(0, -0.01, 0.22);
+  jawMesh.position.set(0, -0.01, 0.16);
   jawMesh.scale.set(1, 0.46, 1);
   jaw.add(jawMesh);
   const teeth = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.08, 0.03), plainMat(0xf1e8d6, 0.5));
@@ -267,11 +267,11 @@ export function buildRat() {
   function eye(side) {
     const group = new THREE.Group();
     group.position.set(side * 0.175, -0.005, 0.40); // lower & forward onto the muzzle
-    const ball = sph(0.072, plainMat(0x120f08, 0.35), 8);
+    const ball = sph(0.072, plainMat(0x120f08, 0.35), 10);
     ball.scale.z = 0.75;
     group.add(ball);
     const glint = sph(0.024, new THREE.MeshStandardMaterial({
-      color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.9, roughness: 0.1, flatShading: true,
+      color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.9, roughness: 0.1, flatShading: false,
     }), 5);
     glint.position.set(side * 0.022, 0.03, 0.05);
     ball.add(glint);

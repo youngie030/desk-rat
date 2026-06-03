@@ -104,31 +104,42 @@ function sanitizeTraits(raw) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LINES = {
-  // 무드별 / by mood
-  content:       ['뭐, 나쁘지 않네.', '평화롭군.', '...이대로 좋아.', '딱 적당해.'],
-  grumpy:        ['건드리지 마.', '...오늘 별로야.', '흥.', '귀찮게 굴지 마.'],
-  playful:       ['놀자는 거야?', '오, 재밌겠는데.', '잡아봐.', '심심하던 참인데.'],
-  sleepy:        ['졸려...', '5분만 더.', '...하암.', '깨우지 마.'],
-  affectionate:  ['...뭐, 곁에 있어도 돼.', '오늘은 좀 봐줄게.', '나쁘지 않은 손길이야.', '흠... 좋네.'],
-  sulky:         ['흥, 저리 가.', '...삐졌어.', '말 안 걸 거야.', '됐어, 신경 꺼.'],
-  smug:          ['역시 내가 최고지.', '봤지? 이게 나야.', '후훗.', '완벽해, 나란 쥐.'],
-  curious:       ['...저게 뭐지.', '뭐 보냐.', '흥미로운데.', '저거 내 거야?'],
-  bored:         ['...심심해.', '할 거 없나.', '하품 나온다.', '뭐라도 해봐.'],
+  content:      ['뭐, 나쁘지 않네.', '평화롭군.', '...이대로 좋아.', '딱 적당해.',
+                 '조용하니 좋다.', '이 정도면 됐어.', '흠, 무난한 하루.', '특별할 거 없지만, 괜찮아.'],
+  grumpy:       ['건드리지 마.', '...오늘 별로야.', '흥.', '귀찮게 굴지 마.',
+                 '말 시키지 마.', '기분 안 좋아, 보면 몰라?', '저리 비켜.', '오늘은 날이 아니야.'],
+  playful:      ['놀자는 거야?', '오, 재밌겠는데.', '잡아봐.', '심심하던 참인데.',
+                 '한 판 붙어?', '못 잡을걸.', '슬슬 몸이 근질거려.', '져주진 않아.'],
+  sleepy:       ['졸려...', '5분만 더.', '...하암.', '깨우지 마.',
+                 '눈이... 안 떠져.', '꿈에서 보자.', '이불 밖은 위험해.', '...zzz.'],
+  affectionate: ['...뭐, 곁에 있어도 돼.', '오늘은 좀 봐줄게.', '나쁘지 않은 손길이야.', '흠... 좋네.',
+                 '거기 그대로 있어 봐.', '...이런 건 싫지 않아.', '조금만 더, 있어 줘.', '너 손은 따뜻하네.'],
+  sulky:        ['흥, 저리 가.', '...삐졌어.', '말 안 걸 거야.', '됐어, 신경 꺼.',
+                 '몰라.', '...사과는 안 받아줘.', '등 돌릴 거야.', '흥, 됐다고.'],
+  smug:         ['역시 내가 최고지.', '봤지? 이게 나야.', '후훗.', '완벽해, 나란 쥐.',
+                 '내 매력에 빠졌나?', '이 정도는 기본이지.', '감탄해도 돼.', '오늘도 잘생겼고.'],
+  curious:      ['...저게 뭐지.', '뭐 보냐.', '흥미로운데.', '저거 내 거야?',
+                 '냄새가 수상한데.', '저쪽에서 뭔가 움직였어.', '한번 살펴볼까.', '...궁금하잖아.'],
+  bored:        ['...심심해.', '할 거 없나.', '하품 나온다.', '뭐라도 해봐.',
+                 '시간이 안 가네.', '아무거나 던져봐.', '벽이나 볼까.', '...지루해 죽겠어.'],
 
-  // 유대 단계별 인사/일상 / by bond tier (used for ambient lines)
-  bondLow:       ['...누구세요.', '거리 좀 둬.', '아직 안 친해.', '흥, 두고 보자.'],
-  bondMid:       ['이제 좀 익숙하네.', '뭐, 나쁜 집사는 아니야.', '오늘도 왔구나.'],
-  bondHigh:      ['...너라서 봐주는 거야.', '없으면 좀 허전하더라. (작게)', '내 사람이지, 너.', '흥, 보고 싶었던 건 아니고.'],
+  bondLow:      ['...누구세요.', '거리 좀 둬.', '아직 안 친해.', '흥, 두고 보자.',
+                 '경계 푸는 데 시간 걸려.', '아직 네 편 아니야.'],
+  bondMid:      ['이제 좀 익숙하네.', '뭐, 나쁜 집사는 아니야.', '오늘도 왔구나.',
+                 '슬슬 적응됐어.', '있으면 나쁘진 않고.', '단골은 인정해 줄게.'],
+  bondHigh:     ['...너라서 봐주는 거야.', '없으면 좀 허전하더라. (작게)', '내 사람이지, 너.', '흥, 보고 싶었던 건 아니고.',
+                 '...너 정도면 평생 집사 해.', '옆에 있어, 그냥.', '말 안 해도 알지?', '뭐, 정들었나 봐. (작게)'],
 
-  // 이벤트 반응 / event reactions
-  petGood:       ['...계속해도 돼.', '음, 좋은데.', '거기, 좋아.', '흥, 봐주는 거야.'],
-  petMeh:        ['...적당히 해.', '그래, 그래.', '됐어 이제.'],
-  pokeOnce:      ['아얏!', '왜 찔러!', '...야.'],
-  pokeMany:      ['그만하라고 했지.', '...진짜 화낸다.', '너 두고 봐.'],
-  feedSmall:     ['간식? 받아두지.', '한 입 거리네.', '고작 이거?'],
-  feedBig:       ['오, 제법인데.', '이건 좀 괜찮네.', '배부르다... 후훗.'],
-  ignored:       ['...나 여기 있는데.', '바쁘셔?', '쳐다도 안 보네.', '흥, 됐어.'],
-  danceTogether: ['이런 건 또 좋아.', '오, 같이 출까.', '리듬 좀 타는데?'],
+  petGood:      ['...계속해도 돼.', '음, 좋은데.', '거기, 좋아.', '흥, 봐주는 거야.',
+                 '...거기 말고, 더.', '나쁘지 않아.'],
+  petMeh:       ['...적당히 해.', '그래, 그래.', '됐어 이제.', '간지러워.'],
+  pokeOnce:     ['아얏!', '왜 찔러!', '...야.', '손가락 치워.'],
+  pokeMany:     ['그만하라고 했지.', '...진짜 화낸다.', '너 두고 봐.', '한 번만 더 해봐.'],
+  feedSmall:    ['간식? 받아두지.', '한 입 거리네.', '고작 이거?', '애피타이저인가.'],
+  feedBig:      ['오, 제법인데.', '이건 좀 괜찮네.', '배부르다... 후훗.', '이 맛에 집사 둔다니까.'],
+  ignored:      ['...나 여기 있는데.', '바쁘셔?', '쳐다도 안 보네.', '흥, 됐어.',
+                 '...심심하다고.', '나 좀 봐.', '여기 쥐 한 마리 있다고.'],
+  danceTogether:['이런 건 또 좋아.', '오, 같이 출까.', '리듬 좀 타는데?', '의외로 합이 맞네.'],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,15 +153,15 @@ const LINES = {
 
 const MOODS = {
   //                eyeOpen earPerk earBack tailAmp tailSpeed browTilt  valence arousal
-  content:      { eyeOpen: 0.00, earPerk: 0.05, earBack: 0.00, tailAmp: 0.15, tailSpeed: 0.20, browTilt: 0.00, valence:  0.45, arousal: 0.30 },
-  affectionate: { eyeOpen:-0.08, earPerk: 0.20, earBack: 0.00, tailAmp: 0.40, tailSpeed: 0.55, browTilt: 0.15, valence:  0.80, arousal: 0.45 },
-  playful:      { eyeOpen: 0.15, earPerk: 0.35, earBack: 0.00, tailAmp: 0.70, tailSpeed: 0.90, browTilt: 0.10, valence:  0.65, arousal: 0.85 },
-  smug:         { eyeOpen:-0.05, earPerk: 0.25, earBack: 0.00, tailAmp: 0.30, tailSpeed: 0.35, browTilt:-0.10, valence:  0.55, arousal: 0.40 },
-  curious:      { eyeOpen: 0.20, earPerk: 0.45, earBack: 0.00, tailAmp: 0.25, tailSpeed: 0.40, browTilt: 0.20, valence:  0.20, arousal: 0.60 },
-  bored:        { eyeOpen:-0.10, earPerk:-0.10, earBack: 0.05, tailAmp: 0.10, tailSpeed: 0.15, browTilt:-0.05, valence: -0.10, arousal: 0.20 },
-  sleepy:       { eyeOpen:-0.45, earPerk:-0.20, earBack: 0.10, tailAmp: 0.05, tailSpeed: 0.10, browTilt: 0.05, valence:  0.10, arousal: 0.08 },
-  grumpy:       { eyeOpen: 0.05, earPerk:-0.05, earBack: 0.30, tailAmp: 0.20, tailSpeed: 0.50, browTilt:-0.30, valence: -0.50, arousal: 0.50 },
-  sulky:        { eyeOpen:-0.15, earPerk:-0.15, earBack: 0.45, tailAmp: 0.08, tailSpeed: 0.20, browTilt:-0.20, valence: -0.65, arousal: 0.25 },
+  content:      { eyeOpen: 0.00, earPerk: 0.08, earBack: 0.00, tailAmp: 0.14, tailSpeed: 0.20, browTilt: 0.00, valence:  0.45, arousal: 0.30 },
+  affectionate: { eyeOpen:-0.10, earPerk: 0.22, earBack: 0.00, tailAmp: 0.42, tailSpeed: 0.60, browTilt: 0.18, valence:  0.80, arousal: 0.45 },
+  playful:      { eyeOpen: 0.18, earPerk: 0.30, earBack: 0.00, tailAmp: 0.80, tailSpeed: 1.00, browTilt: 0.08, valence:  0.65, arousal: 0.85 },
+  smug:         { eyeOpen:-0.18, earPerk: 0.28, earBack: 0.00, tailAmp: 0.32, tailSpeed: 0.40, browTilt:-0.22, valence:  0.55, arousal: 0.40 },
+  curious:      { eyeOpen: 0.26, earPerk: 0.50, earBack: 0.00, tailAmp: 0.22, tailSpeed: 0.45, browTilt: 0.26, valence:  0.20, arousal: 0.60 },
+  bored:        { eyeOpen:-0.16, earPerk:-0.16, earBack: 0.06, tailAmp: 0.08, tailSpeed: 0.12, browTilt:-0.04, valence: -0.10, arousal: 0.20 },
+  sleepy:       { eyeOpen:-0.50, earPerk:-0.22, earBack: 0.10, tailAmp: 0.04, tailSpeed: 0.08, browTilt: 0.06, valence:  0.10, arousal: 0.08 },
+  grumpy:       { eyeOpen: 0.08, earPerk:-0.05, earBack: 0.28, tailAmp: 0.30, tailSpeed: 0.70, browTilt:-0.34, valence: -0.50, arousal: 0.50 },
+  sulky:        { eyeOpen:-0.20, earPerk:-0.18, earBack: 0.50, tailAmp: 0.05, tailSpeed: 0.12, browTilt:-0.18, valence: -0.65, arousal: 0.25 },
 };
 
 const MOOD_KEYS = Object.keys(MOODS);

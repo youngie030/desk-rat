@@ -66,6 +66,11 @@ const def = {
 };
 const target = { ...def };
 const cur = { ...def };
+// Expressive channels use a slightly under-damped spring (overshoot + settle)
+// instead of a dead lerp — "servo" -> "muscle". Slow channels keep the lerp.
+const vel = {};
+const SPRING = { bodyLean: 1, armRaise: 1, armSpread: 1, rootY: 1, neckX: 1, bodyYaw: 1, squash: 1 };
+let curLookGain = 0; // separately-smoothed look gain (prevents neck whip)
 
 function lerp(a, b, t) { return a + (b - a) * t; }
 
@@ -85,6 +90,7 @@ let curActivity = 'lounge';
 let walkAmt = 0;          // 0..1 eased "how much walking" (drives leg/arm gait)
 let gaitPhase = 0;        // 0..1 gait phase from the life brain
 const tailChain = new Array(11).fill(0); // springy tail follow-through
+const tailVel = new Array(11).fill(0);
 let prevRootRotY = 0, prevRootRotZ = 0;
 let lastFacing = 1, turnT = 0; // turn-in-place on direction reversal
 let bellyJig = 0, bellyJigV = 0, prevRootYpos = 0; // flesh jiggle spring on impacts
@@ -496,9 +502,17 @@ function frameBody() {
     else if (dirOut.action === 'trick') setState('dance');
   }
 
-  // ---- ease cur -> target ----
-  const k = 1 - Math.pow(0.001, dt); // ~smoothing
-  for (const key in target) cur[key] = lerp(cur[key], target[key], k);
+  // ---- ease cur -> target (spring on expressive channels, lerp on the rest) ----
+  const k = 1 - Math.pow(0.001, dt);
+  for (const key in target) {
+    if (SPRING[key]) {
+      const a = (target[key] - cur[key]) * 120 - (vel[key] || 0) * 14; // ζ≈0.64
+      vel[key] = (vel[key] || 0) + a * dt;
+      cur[key] += vel[key] * dt;
+    } else {
+      cur[key] = lerp(cur[key], target[key], k);
+    }
+  }
 
   applyPose(t, dt, hs, bs, curDist);
 
@@ -666,8 +680,8 @@ function updateState(dt, hs, bs, curDist) {
     }
     case 'curl': {
       Object.assign(target, {
-        eyeOpen: 0.15, earBack: 0.25, bodyLean: 0.1, rootY: -0.5, neckX: 0.25,
-        lookGain: 0, tailAmp: 0.04, tailSpeed: 0.5, belly: fullness,
+        eyeOpen: 0.15, earBack: 0.25, bodyLean: 0.22, rootY: -0.5, neckX: 0.4,
+        lookGain: 0, tailAmp: 0.02, tailSpeed: 0.5, belly: fullness,
       });
       if (near || stateT > 8) setState('idle');
       break;
@@ -820,7 +834,8 @@ function runLife(dt) {
     target.bodyLean = (target.bodyLean || 0) + 0.06;    // small lean into the turn
   }
   if (walking) gaitPhase = act.stepPhase;
-  target.bodyYaw = walking ? act.facing * 1.15 : 0;
+  // Yaw to profile in step with the leg ramp so there's no moonwalk slide.
+  target.bodyYaw = walking ? act.facing * 1.15 * Math.max(walkAmt, 0.15) : 0;
 
   // ---- window movement (gated during a pivot so the feet don't skate) ----
   if (act.moveWindowTo && act.speedPx > 0 && turnT <= 0) {
@@ -861,7 +876,7 @@ function runLife(dt) {
       break;
     case 'groom':
       Object.assign(P, { eyeOpen: 0.45, earPerk: 0.2, earBack: 0, bodyLean: 0.08,
-        armRaise: 0.5, armIn: 1.05, jaw: 0.08, groom: 1, tailAmp: 0.1, tailSpeed: 1.5 });
+        armRaise: 0.5, armIn: 1.05, jaw: 0.08, groom: 1, neckX: 0.18, tailAmp: 0.1, tailSpeed: 1.5 });
       break;
     default: // 'sit' / 'stand'
       Object.assign(P, { eyeOpen: lerp(0.5, 0.66, m), earPerk: m > 0.7 ? 0.25 : 0, earBack: 0,
@@ -922,13 +937,14 @@ function applyPose(t, dt, hs, bs, curDist) {
     }
   }
 
-  // ---- Look at cursor ----
+  // ---- Look at cursor (gain smoothed separately so the neck never whips) ----
+  curLookGain = lerp(curLookGain, cur.lookGain, 1 - Math.pow(0.02, dt));
   let wantY = cur.neckY, wantX = cur.neckX;
-  if (cur.lookGain > 0.01 && cursor.x > -900) {
+  if (curLookGain > 0.01 && cursor.x > -900) {
     const dx = cursor.x - hs.x;
     const dy = cursor.y - hs.y;
-    wantY += THREE.MathUtils.clamp(dx / 320, -0.8, 0.8) * cur.lookGain;
-    wantX += THREE.MathUtils.clamp(dy / 360, -0.45, 0.6) * cur.lookGain;
+    wantY += THREE.MathUtils.clamp(dx / 320, -0.8, 0.8) * curLookGain;
+    wantX += THREE.MathUtils.clamp(dy / 360, -0.45, 0.6) * curLookGain;
   } else {
     // Idle glancing — yaw and pitch wander.
     idleLook = lerp(idleLook, idleLookTarget, 0.02);
@@ -1005,29 +1021,33 @@ function applyPose(t, dt, hs, bs, curDist) {
   if (walkAmt > 0.01) {
     const gp = gaitPhase * Math.PI * 2;
     const la = 0.55 * walkAmt;
-    const DUTY = 0.6; // fraction of the cycle a foot is planted
+    const fast = curActivity === 'zoomies' ? 1 : 0;
+    const DUTY = lerp(0.62, 0.42, fast); // trot = less stance, more airtime
+    const liftAmt = lerp(0.9, 1.25, fast);
     function legPose(ph) {
       if (ph < DUTY) {            // stance: linear backward push, foot down
         const u = ph / DUTY;
         return { swingX: la * (0.6 - u * 1.2), lift: 0 };
       }
-      const u = (ph - DUTY) / (1 - DUTY); // swing: ease forward + lift
-      return { swingX: la * (-0.6 + u * 1.2), lift: Math.sin(u * Math.PI) };
+      const u = (ph - DUTY) / (1 - DUTY); // swing: quick toe-off, soft set-down
+      return { swingX: la * (-0.6 + u * 1.2), lift: Math.sin(u * Math.PI) * (0.7 + 0.3 * (1 - u)) };
     }
     const L = legPose(gaitPhase % 1), R = legPose((gaitPhase + 0.5) % 1);
     rat.legL.rotation.x = L.swingX;
     rat.legR.rotation.x = R.swingX;
-    rat.legL.knee.rotation.x = L.lift * 0.9 * walkAmt;
-    rat.legR.knee.rotation.x = R.lift * 0.9 * walkAmt;
+    rat.legL.knee.rotation.x = L.lift * liftAmt * walkAmt;
+    rat.legR.knee.rotation.x = R.lift * liftAmt * walkAmt;
     // Arms counter-swing to the legs.
     rat.armL.shoulder.rotation.x += Math.sin(gp + Math.PI) * 0.4 * walkAmt;
     rat.armR.shoulder.rotation.x += Math.sin(gp) * 0.4 * walkAmt;
-    // Weight transfer: body sinks onto each footfall and rolls toward the load;
-    // nose dips on push-off; head nod lags the torso (overlapping action).
+    // Weight transfer + overlapping head nod.
     rat.root.position.y += (-Math.abs(Math.sin(gp)) * 0.06 + 0.02) * walkAmt;
     rat.root.rotation.z += Math.sin(gp) * 0.05 * walkAmt;
     rat.bodyGroup.rotation.x += Math.cos(gp * 2) * 0.025 * walkAmt;
     rat.neck.rotation.x += Math.sin(gp * 2 + 0.6) * 0.05 * walkAmt;
+    // Head stabilizes against torso roll/yaw so the gaze stays level.
+    rat.neck.rotation.z -= Math.sin(gp) * 0.035 * walkAmt;
+    rat.neck.rotation.y -= Math.sin(gp) * 0.02 * walkAmt;
   } else if (curPosture === 'lie' || curPosture === 'sleep') {
     // Splayed-out limbs so the low posture reads as lying down, not crouching.
     rat.legL.rotation.set(-0.55, 0, 0.6);
@@ -1070,14 +1090,16 @@ function applyPose(t, dt, hs, bs, curDist) {
   const drive = THREE.MathUtils.clamp(-yawVel * 0.22 - rollVel * 0.14, -0.7, 0.7);
   tailChain[0] += (drive - tailChain[0]) * Math.min(1, dt * 12);
   for (let i = 1; i < tailChain.length; i++) {
-    tailChain[i] += (tailChain[i - 1] - tailChain[i]) * Math.min(1, dt * 14);
+    const a = (tailChain[i - 1] - tailChain[i]) * 90 - tailVel[i] * 11; // springy whip + settle
+    tailVel[i] += a * dt;
+    tailChain[i] += tailVel[i] * dt;
   }
   const tAmp = cur.tailAmp + (ex.tailAmp || 0);
   const tSpd = cur.tailSpeed + (ex.tailSpeed || 0);
   rat.tailSegs.forEach((seg, i) => {
     const phase = t * tSpd - i * 0.5;
     seg.rotation.y = Math.sin(phase) * tAmp + tailChain[i] * (0.4 + i * 0.12);
-    seg.rotation.x = 0.12 + Math.cos(phase * 0.5) * 0.05;
+    seg.rotation.x = 0.12 + i * 0.015 + Math.cos(phase * 0.5) * 0.05; // distal droop
   });
 
   // Flesh-jiggle spring: driven by the root's vertical velocity (landings/hops),
